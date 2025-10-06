@@ -1,0 +1,24 @@
+{
+  "name": "silvercharter40",
+  "version": "1.0.0",
+  "description": "1. Install Node.js: https://nodejs.org 2. Clone this repo: `git clone https://github.com/YOUR_USERNAME/pokemon-singles-uploader.git` 3. Install dependencies: `npm install` 4. Create a `.env` file with your Shopify credentials:",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khn48glqbz/silvercharter40.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/khn48glqbz/silvercharter40/issues"
+  },
+  "homepage": "https://github.com/khn48glqbz/silvercharter40#readme",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "node-fetch": "^3.3.2"
+  }
+}
