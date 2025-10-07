@@ -42,7 +42,9 @@ async function updateEnv() {
     { name: "SHOPIFY_API_KEY", message: "API Key (optional, for reference):", default: current.SHOPIFY_API_KEY || "" },
   ]);
 
-  const envContent = Object.entries(answers).map(([k, v]) => `${k}=${v}`).join("\n");
+  const envContent = Object.entries(answers)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
   fs.writeFileSync(".env", envContent);
   console.log(".env file updated successfully!\n");
 }
@@ -73,9 +75,7 @@ async function scrapeCard(url) {
   return { name, set, price: numeric };
 }
 
-// === NEW: Currency conversion system ===
-
-// Fetch list of available currencies
+// === Currency conversion system ===
 async function viewAvailableCurrencies() {
   try {
     const res = await axios.get("https://api.frankfurter.app/v1/currencies");
@@ -88,7 +88,6 @@ async function viewAvailableCurrencies() {
   }
 }
 
-// Set conversion currency in settings
 async function setConversionCurrency(config) {
   const { currency } = await inquirer.prompt([
     { name: "currency", message: "Enter target currency code (e.g., GBP, USD, EUR):", default: config.currency },
@@ -98,22 +97,21 @@ async function setConversionCurrency(config) {
   console.log(`Conversion currency set to ${config.currency}\n`);
 }
 
-// Convert USD to target currency
 async function convertFromUSD(amount, config) {
   const target = config.currency;
-  if (target === "USD") return amount; // no conversion needed
+  if (target === "USD") return amount;
 
   try {
     const url = `https://api.frankfurter.app/latest?amount=${amount}&from=USD&to=${target}`;
     const res = await axios.get(url);
-    return res.data.rates[target]; // already converted by API
+    return res.data.rates[target];
   } catch (err) {
     console.error("Currency conversion failed, using original amount:", err.message);
-    return amount; // fallback
+    return amount;
   }
 }
 
-// Apply pricing formula and rounding
+// Pricing formula
 function applyPricingFormula(price, config) {
   let finalPrice = price;
 
@@ -122,7 +120,7 @@ function applyPricingFormula(price, config) {
   else if (formula.startsWith("+")) finalPrice = price + parseFloat(formula.slice(1));
 
   if (config.pricing.roundTo99) {
-    finalPrice = Math.ceil(finalPrice) - 0.01 + 1; // round up to .99
+    finalPrice = Math.ceil(finalPrice) - 0.01 + 1;
     finalPrice = parseFloat(finalPrice.toFixed(2));
   }
 
@@ -130,7 +128,7 @@ function applyPricingFormula(price, config) {
 }
 
 // Shopify importer
-async function importToShopify(card, price, config) {
+async function importToShopify(card, price, config, quantity = 1) {
   const { SHOPIFY_STORE_URL, SHOPIFY_ADMIN_TOKEN } = process.env;
   if (!SHOPIFY_STORE_URL || !SHOPIFY_ADMIN_TOKEN) {
     console.log("Shopify credentials missing. Please set them in Settings first.");
@@ -141,7 +139,7 @@ async function importToShopify(card, price, config) {
   const productData = {
     product: {
       title: card.name,
-      vendor: "The Pokemon Company",
+      vendor: config.shopify.vendor,
       product_type: "Pokemon Card",
       handle: handle,
       status: "active",
@@ -149,12 +147,12 @@ async function importToShopify(card, price, config) {
         {
           price: price.toFixed(2),
           inventory_management: "shopify",
-          inventory_quantity: 1,
+          inventory_quantity: quantity,
           weight: 2,
           weight_unit: "g",
         },
       ],
-      tags: ["Singles"],
+      tags: [config.shopify.collection],
       metafields: [
         { namespace: "global", key: "set", value: card.set, type: "single_line_text_field" },
       ],
@@ -167,14 +165,13 @@ async function importToShopify(card, price, config) {
       productData,
       { headers: { "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN, "Content-Type": "application/json" } }
     );
-    console.log(`Imported ${card.name} (${card.set}) at ${config.currency} ${price.toFixed(2)}`);
+    console.log(`Imported ${quantity}x ${card.name} (${card.set}) at ${config.currency} ${price.toFixed(2)} each`);
   } catch (error) {
     console.error("Shopify import failed:", error.response?.data?.errors || error.message);
   }
 }
 
-
-// Main menu
+// === Main menu ===
 async function mainMenu() {
   const config = loadConfig();
 
@@ -184,12 +181,22 @@ async function mainMenu() {
     ]);
 
     if (choice === "Import cards") {
-      const { url } = await inquirer.prompt([{ name: "url", message: "Enter card URL:" }]);
+      const { urlInput } = await inquirer.prompt([{ name: "urlInput", message: "Enter card URL (add *N for quantity):" }]);
+
+      // parse *N quantity suffix
+      let url = urlInput.trim();
+      let quantity = 1;
+      const match = url.match(/\*(\d+)$/);
+      if (match) {
+        quantity = parseInt(match[1], 10);
+        url = url.slice(0, match.index);
+      }
+
       const card = await scrapeCard(url);
       if (card) {
         const convertedPrice = await convertFromUSD(card.price, config);
         const retailPrice = applyPricingFormula(convertedPrice, config);
-        await importToShopify(card, retailPrice, config);
+        await importToShopify(card, retailPrice, config, quantity);
       }
     }
 
@@ -201,7 +208,7 @@ async function mainMenu() {
   }
 }
 
-// Settings menu
+// === Settings menu ===
 async function settingsMenu(config) {
   const { section } = await inquirer.prompt([
     {
