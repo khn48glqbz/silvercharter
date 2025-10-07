@@ -180,8 +180,18 @@ async function mainMenu() {
       { type: "list", name: "choice", message: "Main Menu", choices: ["Import cards", "Settings", "Exit"] },
     ]);
 
-    if (choice === "Import cards") {
-      const { urlInput } = await inquirer.prompt([{ name: "urlInput", message: "Enter card URL (add *N for quantity):" }]);
+  if (choice === "Import cards") {
+    while (true) {
+      const { urlInput } = await inquirer.prompt([
+        { name: "urlInput", message: 'Enter card URL (add *N for quantity, type "return" to go back, "exit" to quit):' },
+      ]);
+
+      const input = urlInput.trim().toLowerCase();
+      if (input === "return") break;
+      if (input === "exit") {
+        console.log("Exiting...");
+        process.exit(0);
+      }
 
       // parse *N quantity suffix
       let url = urlInput.trim();
@@ -192,13 +202,18 @@ async function mainMenu() {
         url = url.slice(0, match.index);
       }
 
-      const card = await scrapeCard(url);
-      if (card) {
+      try {
+        const card = await scrapeCard(url);
+        if (!card) continue;
+
         const convertedPrice = await convertFromUSD(card.price, config);
         const retailPrice = applyPricingFormula(convertedPrice, config);
         await importToShopify(card, retailPrice, config, quantity);
+      } catch (err) {
+        console.error("Error importing card:", err.message);
       }
     }
+  }
 
     if (choice === "Settings") await settingsMenu(config);
     if (choice === "Exit") {
