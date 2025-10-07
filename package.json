@@ -1,7 +1,7 @@
 {
   "name": "silvercharter40",
   "version": "1.0.0",
-  "description": "1. Install Node.js: https://nodejs.org 2. Clone this repo: `git clone https://github.com/YOUR_USERNAME/pokemon-singles-uploader.git` 3. Install dependencies: `npm install` 4. Create a `.env` file with your Shopify credentials:",
+  "description": "Pulls prices and metadata from Pricecharter and imports to Shopify using it's Restless API ",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
