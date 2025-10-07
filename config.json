@@ -1,0 +1,12 @@
+{
+  "currency": "GBP",
+  "pricing": {
+    "formula": "*1",
+    "roundTo99": true
+  },
+  "shopify": {
+    "vendor": "The Pokemon Company",
+    "brand": "Pokemon",
+    "collection": "Singles"
+  }
+}
