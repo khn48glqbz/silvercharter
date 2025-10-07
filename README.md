@@ -1,4 +1,4 @@
-# Pokemon Singles Uploader
+# Pricecharter Singles Uploader
 
 ## Setup
 1. Install Node.js: https://nodejs.org
