@@ -120,7 +120,7 @@ function applyPricingFormula(price, config) {
   else if (formula.startsWith("+")) finalPrice = price + parseFloat(formula.slice(1));
 
   if (config.pricing.roundTo99) {
-    finalPrice = Math.ceil(finalPrice) - 0.01 + 1;
+    finalPrice = Math.ceil(finalPrice) - 0.01; // clean .99 rounding
     finalPrice = parseFloat(finalPrice.toFixed(2));
   }
 
