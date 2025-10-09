@@ -143,6 +143,7 @@ async function importToShopify(card, price, config, quantity = 1) {
       product_type: "Pokemon Card",
       handle: handle,
       status: "active",
+      published_scope: "pos",
       variants: [
         {
           price: price.toFixed(2),
@@ -154,7 +155,7 @@ async function importToShopify(card, price, config, quantity = 1) {
       ],
       tags: [config.shopify.collection],
       metafields: [
-        { namespace: "global", key: "set", value: card.set, type: "single_line_text_field" },
+        { namespace: "global", key: "expansion", value: card.set, type: "single_line_text_field" },
       ],
     },
   };
