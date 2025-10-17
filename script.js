@@ -1,267 +1,472 @@
-import fs from "fs";
-import inquirer from "inquirer";
-import dotenv from "dotenv";
-import axios from "axios";
-import * as cheerio from "cheerio";
+  // #!/usr/bin/env node
+  import fs from "fs";
+  import path from "path";
+  import inquirer from "inquirer";
+  import dotenv from "dotenv";
+  import axios from "axios";
+  import * as cheerio from "cheerio";
 
-dotenv.config();
+  dotenv.config();
 
-const CONFIG_PATH = "./config.json";
+  // ===== Constants & Paths =====
+  const CONFIG_PATH = "./config.json";
+  const LABELS_DIR = "./labels";
 
-// Load config
-function loadConfig() {
-  if (!fs.existsSync(CONFIG_PATH)) {
-    fs.writeFileSync(
-      CONFIG_PATH,
-      JSON.stringify(
-        {
-          currency: "GBP", // default conversion currency
-          pricing: { formula: "*1.0", roundTo99: false },
-          shopify: { vendor: "The Pokemon Company", brand: "Pokemon", collection: "Singles" },
-        },
-        null,
-        2
-      )
-    );
+  // ===== Config helpers =====
+  function loadConfig() {
+    if (!fs.existsSync(CONFIG_PATH)) {
+      fs.writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify(
+          {
+            currency: "GBP",
+            pricing: { formula: "*1.0", roundTo99: false },
+            shopify: { vendor: "The Pokemon Company", collection: "Singles" },
+          },
+          null,
+          2
+        )
+      );
+    }
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
   }
-  return JSON.parse(fs.readFileSync(CONFIG_PATH));
-}
+  function saveConfig(config) {
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  }
 
-// Save config
-function saveConfig(config) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-}
+  // ===== .env update helper =====
+  async function updateEnv() {
+    const current = dotenv.config().parsed || {};
+    const answers = await inquirer.prompt([
+      {
+        name: "SHOPIFY_STORE_URL",
+        message: "Shopify Store URL (hostname, e.g. yourshop.myshopify.com) - do NOT include protocol:",
+        default: current.SHOPIFY_STORE_URL || process.env.SHOPIFY_STORE_URL || "",
+      },
+      {
+        name: "SHOPIFY_ADMIN_TOKEN",
+        message: "Admin API Token (X-Shopify-Access-Token):",
+        default: current.SHOPIFY_ADMIN_TOKEN || process.env.SHOPIFY_ADMIN_TOKEN || "",
+      },
+      {
+        name: "POS_PUBLICATION_ID",
+        message: "POS Publication ID (optional; leave blank to auto-detect):",
+        default: current.POS_PUBLICATION_ID || process.env.POS_PUBLICATION_ID || "",
+      },
+    ]);
+    const content = Object.entries(answers).map(([k, v]) => `${k}=${v}`).join("\n");
+    fs.writeFileSync(".env", content, "utf8");
+    console.log(".env updated. Note: changes take effect after restarting the script or calling dotenv.config().");
+    dotenv.config();
+  }
 
-// Update .env
-async function updateEnv() {
-  const current = dotenv.config().parsed || {};
+  // ===== Scraper (robust) =====
+  async function scrapeCard(urlInput) {
+    let url = String(urlInput || "").trim();
+    if (!url) {
+      console.error("No URL provided.");
+      return null;
+    }
+    // ensure protocol
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url.replace(/^\/+/, "");
+    console.log(`Scraping ${url}`);
 
-  const answers = await inquirer.prompt([
-    { name: "SHOPIFY_STORE_URL", message: "Shopify Store URL:", default: current.SHOPIFY_STORE_URL || "" },
-    { name: "SHOPIFY_ADMIN_TOKEN", message: "Admin API Token:", default: current.SHOPIFY_ADMIN_TOKEN || "" },
-    { name: "SHOPIFY_API_KEY", message: "API Key (optional, for reference):", default: current.SHOPIFY_API_KEY || "" },
-  ]);
-
-  const envContent = Object.entries(answers)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-  fs.writeFileSync(".env", envContent);
-  console.log(".env file updated successfully!\n");
-}
-
-// Scraper
-async function scrapeCard(url) {
-  console.log(`Scraping ${url}`);
-  const { data } = await axios.get(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-      Accept: "text/html,application/xhtml+xml",
+    const headers = {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-GB,en;q=0.9",
-    },
-  });
+      Referer: "https://www.pricecharting.com/",
+      Connection: "keep-alive",
+    };
 
-  const $ = cheerio.load(data);
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const res = await axios.get(url, { headers, timeout: 15000 });
+        const html = res.data;
+        const $ = cheerio.load(html);
 
-  const name = $("#product_name").clone().children().remove().end().text().trim();
-  const set = $("#product_name a").text().trim();
-  const priceText = $("td#used_price .price.js-price").first().text().trim();
+        // Name (strip children of #product_name)
+        const name = $("#product_name").clone().children().remove().end().text().trim() || $("h1").first().text().trim();
 
-  if (!priceText) {
-    console.log("Could not find price info.");
+        // Price
+        let priceText = $("td#used_price .price.js-price").first().text().trim();
+        if (!priceText) priceText = $("span.price.js-price").first().text().trim();
+
+        if (!priceText) {
+          console.warn("Page loaded but price selector not found. Snippet follows:");
+          console.warn(String(html).slice(0, 1000));
+          return null;
+        }
+
+        const numeric = parseFloat(priceText.replace(/[£$,]/g, ""));
+        if (Number.isNaN(numeric)) {
+          console.warn("Price parse returned NaN. priceText:", priceText);
+          return null;
+        }
+
+        return { name, price: numeric };
+      } catch (err) {
+        const status = err.response?.status;
+        const statusText = err.response?.statusText;
+        const msg = status ? `HTTP ${status} ${statusText}` : err.message;
+        console.warn(`Scrape attempt ${attempt} failed: ${msg}`);
+
+        if (attempt === maxAttempts && err.response) {
+          console.error("Final attempt response headers:", err.response.headers);
+          const snippet = String(err.response.data || "").slice(0, 2000);
+          console.error("Final attempt response body snippet:\n", snippet);
+        }
+
+        if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
     return null;
   }
 
-  const numeric = parseFloat(priceText.replace(/[£$,]/g, ""));
-  return { name, set, price: numeric };
-}
+  // ===== Currency conversion via Frankfurter =====
+  async function convertFromUSD(amount, config) {
+    const target = (config && config.currency) ? config.currency : "GBP";
+    if (target === "USD") return amount;
+    try {
+      const url = `https://api.frankfurter.app/latest?amount=${amount}&from=USD&to=${target}`;
+      const res = await axios.get(url, { timeout: 10000 });
+      const converted = res.data?.rates?.[target];
+      return typeof converted === "number" ? converted : amount;
+    } catch (err) {
+      console.warn("Currency conversion failed; using original USD amount:", err.message);
+      return amount;
+    }
+  }
 
-// === Currency conversion system ===
-async function viewAvailableCurrencies() {
-  try {
-    const res = await axios.get("https://api.frankfurter.app/v1/currencies");
-    console.log("Available currencies:");
-    Object.entries(res.data).forEach(([code, name]) => {
-      console.log(`${code}: ${name}`);
+  // ===== Pricing formula =====
+  function applyPricingFormula(price, config) {
+    let finalPrice = Number(price);
+    const formula = config?.pricing?.formula || "*1.0";
+    if (formula.startsWith("*")) finalPrice = finalPrice * parseFloat(formula.slice(1));
+    else if (formula.startsWith("+")) finalPrice = finalPrice + parseFloat(formula.slice(1));
+    if (config?.pricing?.roundTo99) {
+      finalPrice = Math.ceil(finalPrice) - 0.01;
+    }
+    return Number(finalPrice.toFixed(2));
+  }
+
+  // ===== CSV helpers =====
+  function makeNumericSessionId() {
+    const now = new Date();
+    const yyyy = String(now.getFullYear());
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mi = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+    const ms = String(now.getMilliseconds()).padStart(3, "0");
+    return `${yyyy}${mm}${dd}${hh}${mi}${ss}${ms}`;
+  }
+  function ensureLabelsDir() {
+    if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR, { recursive: true });
+  }
+  function createSessionCSV(sessionId) {
+    ensureLabelsDir();
+    const filePath = path.join(LABELS_DIR, `session${sessionId}.csv`);
+    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "Date,Price,Name,Grade\n", "utf8");
+    return filePath;
+  }
+  function appendCsvRows(filePath, dateOnly, priceStr, name, grade, quantity) {
+    const esc = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    let out = "";
+    for (let i = 0; i < quantity; i++) {
+      out += [esc(dateOnly), esc(priceStr), esc(name), esc(grade || "")].join(",") + "\n";
+    }
+    fs.appendFileSync(filePath, out, "utf8");
+  }
+
+  // ===== Shopify helper utilities =====
+  function buildShopifyBase() {
+    const raw = (process.env.SHOPIFY_STORE_URL || "").trim();
+    if (!raw) return null;
+    return /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, "") : `https://${raw.replace(/\/+$/, "")}`;
+  }
+  function getShopifyToken() {
+    return (process.env.SHOPIFY_ADMIN_TOKEN || "").trim();
+  }
+
+  async function getPosPublicationIdAuto() {
+    const base = buildShopifyBase();
+    const token = getShopifyToken();
+    if (!base || !token) return null;
+    try {
+      const res = await axios.get(`${base}/admin/api/2024-07/publications.json`, {
+        headers: { "X-Shopify-Access-Token": token, Accept: "application/json" },
+        timeout: 10000,
+      });
+      const pubs = res.data?.publications || [];
+      const pos = pubs.filter((p) => String(p.name).toLowerCase() === "point of sale");
+      if (pos.length === 0) return null;
+      pos.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return pos[0].id;
+    } catch (err) {
+      console.warn("Could not auto-detect POS publication id:", err.response?.status, err.response?.data || err.message);
+      return null;
+    }
+  }
+
+  // ===== Helper: GraphQL POST =====
+  async function graphqlPost(body) {
+    const base = buildShopifyBase();
+    const token = getShopifyToken();
+    if (!base || !token) throw new Error("Missing SHOPIFY_STORE_URL or SHOPIFY_ADMIN_TOKEN in environment.");
+
+    const url = `${base}/admin/api/2024-07/graphql.json`;
+    const res = await axios.post(url, body, {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      timeout: 15000,
     });
-  } catch (err) {
-    console.error("Failed to fetch currencies:", err.message);
+    return res.data;
   }
-}
 
-async function setConversionCurrency(config) {
-  const { currency } = await inquirer.prompt([
-    { name: "currency", message: "Enter target currency code (e.g., GBP, USD, EUR):", default: config.currency },
-  ]);
-  config.currency = currency.toUpperCase();
-  saveConfig(config);
-  console.log(`Conversion currency set to ${config.currency}\n`);
-}
+  // ===== GraphQL / Shopify helper =====
+async function createDraftAndPublishToPos({ title, price, quantity, sourceUrl }, config) {
+  const base = buildShopifyBase();
+  const token = getShopifyToken();
+  if (!base || !token) throw new Error("Missing SHOPIFY_STORE_URL or SHOPIFY_ADMIN_TOKEN.");
 
-async function convertFromUSD(amount, config) {
-  const target = config.currency;
-  if (target === "USD") return amount;
+  let productId = null;
+  let inventoryItemId = null;
+  let isNewProduct = false;
 
+  // ----- 1) Try to find existing product by metafield -----
   try {
-    const url = `https://api.frankfurter.app/latest?amount=${amount}&from=USD&to=${target}`;
-    const res = await axios.get(url);
-    return res.data.rates[target];
+    const query = {
+      query: `
+        query {
+          products(first: 1, query: "metafields.pricecharting.source_url:\\"${sourceUrl}\\"") {
+            edges {
+              node {
+                id
+                title
+                variants(first: 1) {
+                  edges {
+                    node {
+                      id
+                      inventoryItem { id }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `
+    };
+    const res = await graphqlPost(query);
+    const existingEdge = res?.data?.products?.edges?.[0];
+    if (existingEdge) {
+      productId = existingEdge.node.id;
+      inventoryItemId = existingEdge.node.variants?.edges?.[0]?.node?.inventoryItem?.id.match(/\/InventoryItem\/(\d+)$/)?.[1] || null;
+      console.log("Existing product found:", existingEdge.node.title, productId);
+    }
   } catch (err) {
-    console.error("Currency conversion failed, using original amount:", err.message);
-    return amount;
-  }
-}
-
-// Pricing formula
-function applyPricingFormula(price, config) {
-  let finalPrice = price;
-
-  const formula = config.pricing.formula;
-  if (formula.startsWith("*")) finalPrice = price * parseFloat(formula.slice(1));
-  else if (formula.startsWith("+")) finalPrice = price + parseFloat(formula.slice(1));
-
-  if (config.pricing.roundTo99) {
-    finalPrice = Math.ceil(finalPrice) - 0.01; // clean .99 rounding
-    finalPrice = parseFloat(finalPrice.toFixed(2));
+    console.warn("Failed to query existing product:", err.message || err);
   }
 
-  return finalPrice;
-}
+  // ----- 2) If not found, create new product -----
+  if (!productId) {
+    const payload = {
+      product: {
+        title,
+        vendor: config?.shopify?.vendor || "The Pokemon Company",
+        product_type: "Pokemon Card",
+        status: "draft",
+        variants: [
+          {
+            price: Number(price).toFixed(2),
+            inventory_management: "shopify",
+            inventory_quantity: 0, // start at 0, adjust later
+            weight: 2,
+            weight_unit: "g",
+          }
+        ],
+        tags: [config?.shopify?.collection || "Singles"],
+      }
+    };
 
-// Shopify importer
-async function importToShopify(card, price, config, quantity = 1) {
-  const { SHOPIFY_STORE_URL, SHOPIFY_ADMIN_TOKEN } = process.env;
-  if (!SHOPIFY_STORE_URL || !SHOPIFY_ADMIN_TOKEN) {
-    console.log("Shopify credentials missing. Please set them in Settings first.");
-    return;
+    try {
+      const createRes = await axios.post(`${base}/admin/api/2024-07/products.json`, payload, {
+        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      });
+      const product = createRes.data?.product;
+      productId = product?.id;
+      inventoryItemId = product?.variants?.[0]?.inventory_item_id;
+      isNewProduct = true;
+      console.log(`Created new draft product ${title} (id: ${productId})`);
+    } catch (err) {
+      console.error("Product creation failed:", err.response?.status, err.response?.data || err.message);
+      throw err;
+    }
   }
 
-  const handle = `card-${Math.random().toString(36).substring(2, 8)}`;
-  const productData = {
-    product: {
-      title: card.name,
-      vendor: config.shopify.vendor,
-      product_type: "Pokemon Card",
-      handle: handle,
-      status: "active",
-      published_scope: "pos",
-      variants: [
-        {
-          price: price.toFixed(2),
-          inventory_management: "shopify",
-          inventory_quantity: quantity,
-          weight: 2,
-          weight_unit: "g",
-        },
-      ],
-      tags: [config.shopify.collection],
-      metafields: [
-        { namespace: "global", key: "expansion", value: card.set, type: "single_line_text_field" },
-      ],
-    },
+  // ----- 3) Adjust inventory (for new or existing product) -----
+  if (inventoryItemId && quantity > 0) {
+    try {
+      const locationsRes = await axios.get(`${base}/admin/api/2024-07/locations.json`, {
+        headers: { "X-Shopify-Access-Token": token },
+      });
+      const locationId = locationsRes.data?.locations?.[0]?.id;
+      if (!locationId) throw new Error("No Shopify location found for inventory adjustment");
+
+      const adjBody = {
+        inventory_item_id: Number(inventoryItemId),
+        location_id: Number(locationId),
+        available_adjustment: Number(quantity),
+      };
+      const adjRes = await axios.post(`${base}/admin/api/2024-07/inventory_levels/adjust.json`, adjBody, {
+        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      });
+      console.log("Inventory adjusted:", adjRes.data);
+    } catch (err) {
+      console.error("Inventory adjust failed:", err.response?.status, err.response?.data || err.message);
+    }
+  }
+
+  // ----- 4) Attach / update metafield -----
+  try {
+    const ownerId = `gid://shopify/Product/${productId}`;
+    const metaGql = {
+      query: `
+        mutation setMetafield($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { id namespace key value }
+            userErrors { field message }
+          }
+        }
+      `,
+      variables: {
+        metafields: [
+          {
+            namespace: "pricecharting",
+            key: "source_url",
+            type: "single_line_text_field",
+            value: sourceUrl,
+            ownerId,
+          }
+        ],
+      }
+    };
+    const metaRes = await graphqlPost(metaGql);
+    const errors = metaRes?.data?.metafieldsSet?.userErrors;
+    if (errors?.length) console.warn("Metafield errors:", JSON.stringify(errors, null, 2));
+    else console.log(`Metafield pricecharting.source_url set on product ${productId}`);
+  } catch (err) {
+    console.warn("Failed to set metafield:", err.response?.status, err.response?.data || err.message);
+  }
+
+  // ----- 5) Return clean info -----
+  return {
+    productId,
+    inventoryItemId,
+    isNewProduct,
   };
-
-  try {
-    await axios.post(
-      `${SHOPIFY_STORE_URL}/admin/api/2024-07/products.json`,
-      productData,
-      { headers: { "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN, "Content-Type": "application/json" } }
-    );
-    console.log(`Imported ${quantity}x ${card.name} (${card.set}) at ${config.currency} ${price.toFixed(2)} each`);
-  } catch (error) {
-    console.error("Shopify import failed:", error.response?.data?.errors || error.message);
-  }
 }
 
-// === Main menu ===
-async function mainMenu() {
-  const config = loadConfig();
+  // ===== Main menu & flow =====
+  async function mainMenu() {
+    const config = loadConfig();
+    const sessionId = makeNumericSessionId();
+    const csvPath = createSessionCSV(sessionId);
+    console.log(`Session CSV: ${csvPath}`);
 
-  while (true) {
-    const { choice } = await inquirer.prompt([
-      { type: "list", name: "choice", message: "Main Menu", choices: ["Import cards", "Settings", "Exit"] },
-    ]);
+    // Try to get POS publication id from env or auto-detect (not required)
+    let posPublicationId = process.env.POS_PUBLICATION_ID || null;
+    if (!posPublicationId) {
+      try {
+        posPublicationId = await getPosPublicationIdAuto();
+        if (posPublicationId) console.log(`Detected POS publication id: ${posPublicationId}`);
+      } catch (err) {
+        // ignore
+      }
+    }
 
-  if (choice === "Import cards") {
     while (true) {
-      const { urlInput } = await inquirer.prompt([
-        { name: "urlInput", message: 'Enter card URL (add *N for quantity, type "return" to go back, "exit" to quit):' },
-      ]);
+      const { choice } = await inquirer.prompt([{ type: "list", name: "choice", message: "Main Menu", choices: ["Import cards", "Settings", "Exit"] }]);
+      if (choice === "Import cards") {
+        while (true) {
+          const { urlInput } = await inquirer.prompt([{ name: "urlInput", message: 'Enter card URL (add *N for quantity, "return" to go back, "exit" to quit):' }]);
+          const raw = (urlInput || "").trim();
+          if (!raw) continue;
+          const lower = raw.toLowerCase();
+          if (lower === "return") break;
+          if (lower === "exit") {
+            console.log("Session finished. CSV saved to:", csvPath);
+            process.exit(0);
+          }
 
-      const input = urlInput.trim().toLowerCase();
-      if (input === "return") break;
-      if (input === "exit") {
-        console.log("Exiting...");
+          // parse quantity suffix without lowercasing the URL
+          let url = raw;
+          let qty = 1;
+          const m = url.match(/\*(\d+)$/);
+          if (m) {
+            qty = parseInt(m[1], 10) || 1;
+            url = url.slice(0, m.index);
+          }
+
+          try {
+            await handleImportUrl(url, qty, config, csvPath, posPublicationId);
+          } catch (err) {
+            console.error("Error importing card:", err.message || err);
+          }
+        }
+      } else if (choice === "Settings") {
+        await settingsMenu(config);
+      } else if (choice === "Exit") {
+        console.log("Exiting — session CSV:", csvPath);
         process.exit(0);
       }
+    }
+  }
 
-      // parse *N quantity suffix
-      let url = urlInput.trim();
-      let quantity = 1;
-      const match = url.match(/\*(\d+)$/);
-      if (match) {
-        quantity = parseInt(match[1], 10);
-        url = url.slice(0, match.index);
+  // ===== Handle Import URL =====
+  async function handleImportUrl(url, quantity, config, csvPath, posPublicationIdArg) {
+    const scraped = await scrapeCard(url);
+    if (!scraped) {
+      console.error(`Failed to scrape ${url}`);
+      return;
+    }
+
+    const { name, price } = scraped;
+    const converted = await convertFromUSD(price, config);
+    const finalPrice = applyPricingFormula(converted, config);
+
+    const now = new Date();
+    const dateOnly = now.toISOString().slice(0, 10);
+    const priceStr = `${config.currency || "GBP"} ${finalPrice.toFixed(2)}`;
+    appendCsvRows(csvPath, dateOnly, priceStr, name, "", quantity);
+
+    console.log(`Uploading ${name} (${quantity}x) — ${priceStr}`);
+
+    try {
+      const result = await createDraftAndPublishToPos(
+        { title: name, price: finalPrice, quantity, sourceUrl: url },
+        config,
+        posPublicationIdArg
+      );
+
+      if (result.updated) {
+        console.log(`✔ Updated inventory for ${name}`);
+      } else if (result.method === "created_with_metafield") {
+        console.log(`✔ Created new product with metafield: ${name}`);
+      } else {
+        console.log(`⚠ Product created as draft (reason: ${result.reason || "unknown"})`);
       }
-
-      try {
-        const card = await scrapeCard(url);
-        if (!card) continue;
-
-        const convertedPrice = await convertFromUSD(card.price, config);
-        const retailPrice = applyPricingFormula(convertedPrice, config);
-        await importToShopify(card, retailPrice, config, quantity);
-      } catch (err) {
-        console.error("Error importing card:", err.message);
-      }
+    } catch (err) {
+      console.error(`Import error: ${err.message || err}`);
     }
   }
 
-    if (choice === "Settings") await settingsMenu(config);
-    if (choice === "Exit") {
-      console.log("Exiting...");
-      process.exit(0);
-    }
-  }
-}
-
-// === Settings menu ===
-async function settingsMenu(config) {
-  const { section } = await inquirer.prompt([
-    {
-      type: "list",
-      name: "section",
-      message: "Settings Menu",
-      choices: ["Shopify Setup", "Pricing Settings", "Currency Conversion", "Return"],
-    },
-  ]);
-
-  if (section === "Shopify Setup") {
-    await updateEnv();
-  } else if (section === "Pricing Settings") {
-    const answers = await inquirer.prompt([
-      { name: "formula", message: "Enter pricing formula (*1.2 or +2):", default: config.pricing.formula },
-      { type: "confirm", name: "roundTo99", message: "Round prices to .99?", default: config.pricing.roundTo99 },
-    ]);
-    config.pricing = answers;
-    saveConfig(config);
-    console.log("Pricing settings updated.\n");
-  } else if (section === "Currency Conversion") {
-    const { action } = await inquirer.prompt([
-      {
-        type: "list",
-        name: "action",
-        message: "Currency Conversion",
-        choices: ["View available currencies", "Set conversion currency", "Return"],
-      },
-    ]);
-
-    if (action === "View available currencies") {
-      await viewAvailableCurrencies();
-    } else if (action === "Set conversion currency") {
-      await setConversionCurrency(config);
-    }
-  }
-}
-
-// Start program
-mainMenu();
+  // ===== Start =====
+  mainMenu();
