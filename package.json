@@ -1,6 +1,6 @@
 {
   "name": "silvercharter40",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Local CLI for managing Pokemon singles and Shopify integration",
   "type": "module",
   "main": "script.js",
