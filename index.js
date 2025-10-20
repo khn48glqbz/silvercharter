@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(process.cwd(), "data", ".env") });
 
 // Start CLI
-import mainMenu from "./cli/mainMenu.js";
+import mainMenu from "./src/cli/mainMenu.js";
 
 mainMenu().catch((err) => {
   console.error("Fatal error:", err && err.message ? err.message : err);

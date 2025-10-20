@@ -1,5 +1,5 @@
 import axios from "axios";
-import cheerio from "cheerio";
+import * as cheerio from "cheerio";
 
 export default async function scrapeCard(urlInput) {
   let url = String(urlInput || "").trim();
