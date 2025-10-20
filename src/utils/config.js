@@ -1,33 +1,51 @@
 import fs from "fs";
 import path from "path";
 
-const CONFIG_PATH = path.join(process.cwd(), "data", "config.json");
+const DATA_DIR = path.join(process.cwd(), "data");
+const DEFAULT_PATH = path.join(DATA_DIR, "defaults.json");
+const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 
-export function loadConfig() {
-  if (!fs.existsSync(CONFIG_PATH)) {
-    const defaultConfig = {
+// Ensure the data directory exists
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// Load default config
+export function loadDefaultConfig() {
+  if (!fs.existsSync(DEFAULT_PATH)) {
+    fs.writeFileSync(DEFAULT_PATH, JSON.stringify({
       currency: "GBP",
-      pricing: { formula: "*1.0", roundTo99: false },
-      shopify: { vendor: "The Pokemon Company", collection: "Singles" },
-      nextSessionId: 1
-    };
-    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaultConfig, null, 2), "utf8");
+      pricing: { formula: "*1", roundTo99: true },
+      shopify: { vendor: "The Pokemon Company", brand: "Pokemon", collection: "Singles" },
+      sessionID: 0
+    }, null, 2));
   }
-  return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+  return JSON.parse(fs.readFileSync(DEFAULT_PATH, "utf8"));
 }
 
+// Load user settings, fallback to default
+export function loadConfig() {
+  if (!fs.existsSync(SETTINGS_PATH)) {
+    const defaults = loadDefaultConfig();
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(defaults, null, 2));
+  }
+  return JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8"));
+}
+
+// Save user settings
 export function saveConfig(config) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(config, null, 2));
 }
 
+// Increment sessionID **before** starting session
 export function getAndIncrementSessionId() {
   const config = loadConfig();
-  if (typeof config.nextSessionId !== "number" || isNaN(config.nextSessionId)) {
-    config.nextSessionId = 1;
-  }
-  const id = config.nextSessionId;
-  config.nextSessionId = id + 1;
+  config.sessionID = (config.sessionID || 0) + 1; // increment first
   saveConfig(config);
-  return id;
+  return config.sessionID;
+}
+
+// Restore settings from default
+export function restoreDefaults() {
+  const defaults = loadDefaultConfig();
+  saveConfig(defaults);
+  return defaults;
 }
