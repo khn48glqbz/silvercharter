@@ -78,11 +78,7 @@ async function handleImportUrl(url, quantity, config, csvPath, posPublicationIdA
   const { name, price } = scraped;
   const converted = await convertFromUSD(price, config);
   const finalPrice = applyPricingFormula(converted, config);
-
-  const now = new Date();
-  const dateOnly = now.toISOString().slice(0, 10);
   const priceStr = `${config.currency || "GBP"} ${finalPrice.toFixed(2)}`;
-  appendCsvRows(csvPath, dateOnly, priceStr, name, "", quantity);
 
   console.log(`Uploading ${name} (${quantity}x) — ${priceStr}`);
 
@@ -93,12 +89,18 @@ async function handleImportUrl(url, quantity, config, csvPath, posPublicationIdA
       posPublicationIdArg
     );
 
+    // Use Shopify barcode if available
+    const barcode = result.barcode || "";
+
+    // Add to CSV with new format
+    appendCsvRows(csvPath, barcode, name, finalPrice.toFixed(2), "", "Singles", "Pokémon", quantity);
+
     if (result.updated) {
       console.log(`✔ Updated inventory for ${name}`);
-    } else if (result.method === "created_with_metafield") {
+    } else if (result.isNewProduct) {
       console.log(`✔ Created new product with metafield: ${name}`);
     } else {
-      console.log(`⚠ Product created as draft (reason: ${result.reason || "unknown"})`);
+      console.log(`⚠ Product created as draft (reason: unknown)`);
     }
   } catch (err) {
     console.error(`Import error: ${err.message || err}`);

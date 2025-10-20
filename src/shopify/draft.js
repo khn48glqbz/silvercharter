@@ -1,7 +1,9 @@
+// draft.js
 import axios from "axios";
 import { graphqlPost, buildShopifyBase, getShopifyToken } from "./graphql.js";
 import { adjustInventory } from "./inventory.js";
 import { setSourceUrlMetafield } from "./metafields.js";
+import { generateEAN13 } from "../utils/barcode.js";
 
 export default async function createDraftAndPublishToPos({ title, price, quantity, sourceUrl }, config) {
   const base = buildShopifyBase();
@@ -10,9 +12,10 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
 
   let productId = null;
   let inventoryItemId = null;
+  let barcode = null;
   let isNewProduct = false;
 
-  // ----- 1) Try to find existing product by metafield -----
+  // 1) Try to find existing product by metafield
   try {
     const query = {
       query: `
@@ -26,6 +29,7 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
                   edges {
                     node {
                       id
+                      barcode
                       inventoryItem { id }
                     }
                   }
@@ -40,14 +44,16 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
     const existingEdge = res?.data?.products?.edges?.[0];
     if (existingEdge) {
       productId = existingEdge.node.id;
-      inventoryItemId = existingEdge.node.variants?.edges?.[0]?.node?.inventoryItem?.id.match(/\/InventoryItem\/(\d+)$/)?.[1] || null;
-      console.log("Existing product found:", existingEdge.node.title, productId);
+      const variantNode = existingEdge.node.variants?.edges?.[0]?.node;
+      inventoryItemId = variantNode?.inventoryItem?.id.match(/\/InventoryItem\/(\d+)$/)?.[1] || null;
+      barcode = variantNode?.barcode || null;
+      console.log("Existing product found:", existingEdge.node.title, productId, "Barcode:", barcode);
     }
   } catch (err) {
     console.warn("Failed to query existing product:", err.message || err);
   }
 
-  // ----- 2) If not found, create new product -----
+  // 2) If not found, create new product
   if (!productId) {
     const payload = {
       product: {
@@ -59,9 +65,10 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
           {
             price: Number(price).toFixed(2),
             inventory_management: "shopify",
-            inventory_quantity: 0, // start at 0, adjust later
+            inventory_quantity: 0,
             weight: 2,
             weight_unit: "g",
+            barcode: generateEAN13(),
           }
         ],
         tags: [config?.shopify?.collection || "Singles"],
@@ -74,35 +81,28 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
       });
       const product = createRes.data?.product;
       productId = product?.id;
-      inventoryItemId = product?.variants?.[0]?.inventory_item_id;
+      const variant = product?.variants?.[0];
+      inventoryItemId = variant?.inventory_item_id;
+      barcode = variant?.barcode || null; // may be empty; can set EAN/UPC via Shopify
       isNewProduct = true;
-      console.log(`Created new draft product ${title} (id: ${productId})`);
+      console.log(`Created new draft product ${title} (id: ${productId}) Barcode: ${barcode}`);
     } catch (err) {
       console.error("Product creation failed:", err.response?.status, err.response?.data || err.message);
       throw err;
     }
   }
 
-  // ----- 3) Adjust inventory (for new or existing product) -----
+  // 3) Adjust inventory
   if (inventoryItemId && quantity > 0) {
     try {
       await adjustInventory(inventoryItemId, quantity);
-    } catch (err) {
-      // adjustInventory already logs details
-    }
+    } catch (err) { /* logs inside adjustInventory */ }
   }
 
-  // ----- 4) Attach / update metafield -----
+  // 4) Attach / update metafield
   try {
     await setSourceUrlMetafield(productId, sourceUrl);
-  } catch (err) {
-    // setSourceUrlMetafield logs errors
-  }
+  } catch (err) { /* logs inside setSourceUrlMetafield */ }
 
-  // ----- 5) Return clean info -----
-  return {
-    productId,
-    inventoryItemId,
-    isNewProduct,
-  };
+  return { productId, inventoryItemId, isNewProduct, barcode };
 }
