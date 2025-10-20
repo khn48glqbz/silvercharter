@@ -19,3 +19,6 @@ Thumbs.db
 # Optional IDE/editor files
 .vscode/
 .idea/
+
+# Personal notes
+data/tree.txt
