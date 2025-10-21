@@ -1,35 +1,33 @@
-import fs from "fs";
-import path from "path";
 import inquirer from "inquirer";
-import dotenv from "dotenv";
+import shopifySettings from "./shopifySettings.js";
+import pricingSettings from "./pricingSettings.js";
+import { restoreDefaults } from "../utils/config.js";
 
 export default async function settingsMenu(config) {
-  // load existing env if present
-  const envPath = path.join(process.cwd(), "data", ".env");
-  const current = dotenv.config({ path: envPath }).parsed || {};
+  while (true) {
+    const { settingsChoice } = await inquirer.prompt([
+      {
+        type: "list",
+        name: "settingsChoice",
+        message: "Settings",
+        prefix: "⛏",
+        choices: [
+          "Shopify Settings",
+          "Pricing Settings",
+          "Restore Default Settings",
+          "Return",
+        ],
+      },
+    ]);
 
-  const answers = await inquirer.prompt([
-    {
-      name: "SHOPIFY_STORE_URL",
-      message: "Shopify Store URL (hostname, e.g. yourshop.myshopify.com) - do NOT include protocol:",
-      default: current.SHOPIFY_STORE_URL || process.env.SHOPIFY_STORE_URL || "",
-    },
-    {
-      name: "SHOPIFY_ADMIN_TOKEN",
-      message: "Admin API Token (X-Shopify-Access-Token):",
-      default: current.SHOPIFY_ADMIN_TOKEN || process.env.SHOPIFY_ADMIN_TOKEN || "",
-    },
-    {
-      name: "POS_PUBLICATION_ID",
-      message: "POS Publication ID (optional; leave blank to auto-detect):",
-      default: current.POS_PUBLICATION_ID || process.env.POS_PUBLICATION_ID || "",
-    },
-  ]);
-
-  // ensure data dir exists
-  fs.mkdirSync(path.dirname(envPath), { recursive: true });
-  const content = Object.entries(answers).map(([k, v]) => `${k}=${v}`).join("\n");
-  fs.writeFileSync(envPath, content, "utf8");
-  console.log(".env updated. Note: changes take effect after restarting the script or calling dotenv.config().");
-  dotenv.config({ path: envPath });
+    if (settingsChoice === "Shopify Settings") {
+      await shopifySettings(config);
+    } else if (settingsChoice === "Pricing Settings") {
+      await pricingSettings(config);
+    } else if (settingsChoice === "Restore Default Settings") {
+      restoreDefaults();
+    } else if (settingsChoice === "Return") {
+      break;
+    }
+  }
 }
