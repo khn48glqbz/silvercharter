@@ -1,7 +1,6 @@
 import inquirer from "inquirer";
 import scrapeCard from "../scraper/scrapeCard.js";
-import { convertFromUSD } from "../utils/currency.js";
-import { applyPricingFormula } from "../utils/pricing.js";
+import { calculateFinalPrice } from "../utils/pricing.js";
 import createDraftAndPublishToPos from "../shopify/draft.js";
 import { appendCsvRows } from "../utils/csv.js";
 
@@ -76,8 +75,9 @@ async function handleImportUrl(url, quantity, config, csvPath) {
   }
 
   const { name, price } = scraped;
-  const converted = await convertFromUSD(price, config);
-  const finalPrice = applyPricingFormula(converted, config);
+
+  // Calculate full pricing (conversion, formula, rounding)
+  const { final: finalPrice } = await calculateFinalPrice(price, config);
   const priceStr = `${config.currency || "GBP"} ${finalPrice.toFixed(2)}`;
 
   console.log(`Uploading ${name} (${quantity}x) — ${priceStr}`);
