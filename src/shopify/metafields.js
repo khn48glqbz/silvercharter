@@ -2,6 +2,9 @@ import { graphqlPost } from "./graphql.js";
 
 export async function setSourceUrlMetafield(productId, sourceUrl) {
   try {
+    // Remove query string
+    const cleanUrl = sourceUrl.split("?")[0];
+
     const ownerId = `gid://shopify/Product/${productId}`;
     const metaGql = {
       query: `
@@ -18,7 +21,7 @@ export async function setSourceUrlMetafield(productId, sourceUrl) {
             namespace: "pricecharting",
             key: "source_url",
             type: "single_line_text_field",
-            value: sourceUrl,
+            value: cleanUrl,
             ownerId,
           }
         ],
