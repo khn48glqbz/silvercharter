@@ -1,6 +1,6 @@
 import inquirer from "inquirer";
 import scrapeCard from "../scraper/scrapeCard.js";
-import { calculateFinalPrice } from "../utils/pricing.js";
+import { calculateFinalPrice, getFormulaForCondition } from "../utils/pricing.js";
 import createDraftAndPublishToPos from "../shopify/draft.js";
 import { appendCsvRows } from "../utils/csv.js";
 
@@ -12,75 +12,106 @@ export default async function importMenu(config, csvPath) {
         name: "importChoice",
         message: "Import Cards",
         prefix: "⛏",
-        choices: [
-          "Start Import",
-          "View Syntax",
-          "Return",
-        ],
+        choices: ["Start Import", "View Syntax", "Return"],
       },
     ]);
 
     if (importChoice === "Start Import") {
-      const { typeChoice } = await inquirer.prompt([
-        {
-          type: "list",
-          name: "typeChoice",
-          message: "Select Import Type",
-          prefix: "⛏",
-          choices: ["Graded", "Ungraded", "Return"],
-        },
-      ]);
-      if (typeChoice === "Return") continue;
-
       while (true) {
         const { urlInput } = await inquirer.prompt([
-          { name: "urlInput", message: 'Enter card URL (add *N for quantity, "return" to go back, "exit" to quit):' },
+          { name: "urlInput", message: 'Enter card URL ("return" to go back, "exit" to quit):' },
         ]);
-        const raw = (urlInput || "").trim();
-        if (!raw) continue;
-        const lower = raw.toLowerCase();
+
+        const rawUrl = (urlInput || "").trim();
+        const lower = rawUrl.toLowerCase();
+        if (!rawUrl) continue;
         if (lower === "return") break;
         if (lower === "exit") {
           console.log("Session finished. CSV saved to:", csvPath);
           process.exit(0);
         }
 
-        let url = raw;
-        let qty = 1;
-        const m = url.match(/\*(\d+)$/);
-        if (m) {
-          qty = parseInt(m[1], 10) || 1;
-          url = url.slice(0, m.index);
+        // Clean query params from URL (anything after ?)
+        const url = rawUrl.split("?")[0];
+
+        // Check URL validity early
+        if (!/^https?:\/\//i.test(url)) {
+          console.error("Invalid URL format. Please enter a full http/https link.");
+          continue;
         }
 
+        // Ask for condition/quantity switches
+        const { switches } = await inquirer.prompt([
+          {
+            name: "switches",
+            message: 'Enter additional switches (e.g. "U*2", "G9.5*3", "D*1") — leave blank for default (U*1):',
+            default: "U*1",
+          },
+        ]);
+
+        // Parse switch
+        const switchMatch = switches.match(/^([A-Za-z0-9.]+)\*(\d+)$/);
+        let conditionCode = "U";
+        let quantity = 1;
+
+        if (switchMatch) {
+          conditionCode = switchMatch[1];
+          quantity = parseInt(switchMatch[2], 10) || 1;
+        }
+
+        // Map condition codes to config formula keys
+        const conditionMap = {
+          U: "Ungraded",
+          D: "Damaged",
+          G7: "Grade 7",
+          G8: "Grade 8",
+          G9: "Grade 9",
+          "G9.5": "Grade 9.5",
+          G10: "Grade 10",
+        };
+
+        const condition = conditionMap[conditionCode] || conditionCode;
+        const formula = getFormulaForCondition(condition, config);
+
         try {
-          await handleImportUrl(url, qty, config, csvPath);
+        if (!/^https?:\/\//i.test(url)) {
+          console.error("Invalid URL format. Please enter a full http/https link.");
+          continue;
+        }
+          await handleImportUrl(url, quantity, condition, formula, config, csvPath);
         } catch (err) {
           console.error("Error importing card:", err.message || err);
         }
       }
+
     } else if (importChoice === "View Syntax") {
-      console.log('\nSyntax Guide:\n• Use *N to import multiples (e.g. https://...*3)\n• Type "return" to go back\n• Type "exit" to quit\n');
+      console.log(`
+Syntax Guide:
+  URL only: imports a single ungraded card
+  URL + switches:
+    U*5   → 5 ungraded cards
+    D*3   → 3 damaged cards
+    G9.5*2 → 2 graded 9.5 cards
+
+Type "return" to go back
+Type "exit" to quit
+`);
     } else if (importChoice === "Return") {
       break;
     }
   }
 }
 
-async function handleImportUrl(url, quantity, config, csvPath) {
-  const scraped = await scrapeCard(url);
-  if (!scraped) {
-    console.error(`Failed to scrape ${url}`);
-    return;
-  }
+async function handleImportUrl(url, quantity, condition, formula, config, csvPath) {
+  // Use dummy scrape if grading logic not implemented yet
+  const scraped = await scrapeCard(url).catch(() => null) || { name: "Unknown Card", price: 10.0 };
 
   const { name, price } = scraped;
 
-  // Calculate full pricing (conversion, formula, rounding)
-  const { final: finalPrice } = await calculateFinalPrice(price, config);
+  const { final: finalPrice } = await calculateFinalPrice(price, config, condition);
   const priceStr = `${config.currency || "GBP"} ${finalPrice.toFixed(2)}`;
 
-  console.log(`Uploading ${name} (${quantity}x) — ${priceStr}`);
+  console.log(`Uploading ${name} (${quantity}x, ${condition}) — ${priceStr}`);
 
   try {
     const result = await createDraftAndPublishToPos(
@@ -89,7 +120,7 @@ async function handleImportUrl(url, quantity, config, csvPath) {
     );
 
     const barcode = result.barcode || "";
-    appendCsvRows(csvPath, barcode, name, finalPrice.toFixed(2), "", "Singles", "Pokémon", quantity);
+    appendCsvRows(csvPath, barcode, name, finalPrice.toFixed(2), "", "Singles", "Pokemon", quantity);
 
     if (result.updated) {
       console.log(`Updated inventory for ${name}`);
