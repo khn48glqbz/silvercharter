@@ -1,23 +1,5 @@
 // src/utils/pricing.js
-import axios from "axios";
-
-/**
- * Convert USD -> target currency using Frankfurter API
- */
-export async function convertFromUSD(amount, config) {
-  const target = (config?.currency || "GBP").toUpperCase();
-  if (target === "USD") return amount;
-
-  try {
-    const url = `https://api.frankfurter.app/latest?amount=${amount}&from=USD&to=${target}`;
-    const res = await axios.get(url, { timeout: 10000 });
-    const converted = res.data?.rates?.[target];
-    return typeof converted === "number" ? converted : amount;
-  } catch (err) {
-    console.warn("Currency conversion failed; using original USD amount:", err.message);
-    return amount;
-  }
-}
+import { convertUSD } from "./currency.js";
 
 /**
  * Apply arithmetic pricing formula.
@@ -60,6 +42,23 @@ export function roundUpTo99(value) {
 }
 
 /**
+ * Round down to nearest .99 below the value.
+ * Examples:
+ *  1.89 -> 0.99
+ *  2.00 -> 1.99
+ *  3.74 -> 2.99
+ * Minimum enforced: 0.99
+ */
+export function roundDownTo99(value) {
+  if (typeof value !== "number" || isNaN(value)) return value;
+  const cents = Math.round((value - Math.floor(value)) * 100);
+  if (cents === 99) return Number(value.toFixed(2));
+  const floored = Math.floor(value);
+  const candidate = (floored - 1) + 0.99;
+  return Number(Math.max(0.99, Number(candidate.toFixed(2))).toFixed(2));
+}
+
+/**
  * Retrieve the pricing formula string for a given grade/condition.
  * Falls back to "*1" if not found.
  */
@@ -83,33 +82,41 @@ export async function calculateFinalPrice(amountUSD, config, selectedGrade = nul
     throw new Error("Invalid base price provided.");
   }
 
-  const converted = await convertFromUSD(amountUSD, config);
+  // Use cached converter from src/utils/currency.js
+  const converted = await convertUSD(amountUSD, config?.currency || "USD");
 
   // formulaTable is the object stored in settings.json under "formula"
   const formulaTable = (config && typeof config.formula === "object") ? config.formula : {};
 
-  // If the caller provided a specific grade/condition, prefer its mapping.
-  // Otherwise, if config.formula is a plain string (legacy), use it.
+  // Determine which formula string to use
   let formulaStr;
   if (selectedGrade && typeof formulaTable[selectedGrade] === "string") {
     formulaStr = formulaTable[selectedGrade];
   } else if (typeof config.formula === "string") {
+    // legacy handling (unlikely with new canonical structure)
     formulaStr = config.formula;
   } else {
-    // fallback to Ungraded key if present, otherwise "*1"
     formulaStr = formulaTable["Ungraded"] || "*1";
   }
 
-  const formulaResult = applyPricingFormula(converted, formulaStr);
+  const formulaResult = applyPricingFormula(Number(converted), formulaStr);
 
   // roundTo99 read from the formulaTable object (so it remains grouped with formulas)
   const shouldRound = !!formulaTable.roundTo99;
 
-  const final = shouldRound ? roundUpTo99(formulaResult) : Number(formulaResult.toFixed(2));
+  // Special handling for Damaged condition: round DOWN to .99 (customer request)
+  let final;
+  if (selectedGrade === "Damaged") {
+    final = roundDownTo99(formulaResult);
+  } else if (shouldRound) {
+    final = roundUpTo99(formulaResult);
+  } else {
+    final = Number(Number(formulaResult).toFixed(2));
+  }
 
   return {
     converted,
-    formulaResult: Number(formulaResult.toFixed(2)),
+    formulaResult: Number(Number(formulaResult).toFixed(2)),
     final,
     roundTo99: shouldRound,
     usedFormula: formulaStr,
