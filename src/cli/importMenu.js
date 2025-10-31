@@ -74,10 +74,10 @@ export default async function importMenu(config, csvPath) {
         const formula = getFormulaForCondition(condition, config);
 
         try {
-        if (!/^https?:\/\//i.test(url)) {
-          console.error("Invalid URL format. Please enter a full http/https link.");
-          continue;
-        }
+          if (!/^https?:\/\//i.test(url)) {
+            console.error("Invalid URL format. Please enter a full http/https link.");
+            continue;
+          }
           await handleImportUrl(url, quantity, condition, formula, config, csvPath);
         } catch (err) {
           console.error("Error importing card:", err.message || err);
@@ -114,18 +114,20 @@ async function handleImportUrl(url, quantity, condition, formula, config, csvPat
   console.log(`Uploading ${name} (${quantity}x, ${condition}) — ${priceStr}`);
 
   try {
+    // pass condition through to Shopify create/update
     const result = await createDraftAndPublishToPos(
-      { title: name, price: finalPrice, quantity, sourceUrl: url },
+      { title: name, price: finalPrice, quantity, sourceUrl: url, condition },
       config
     );
 
     const barcode = result.barcode || "";
-    appendCsvRows(csvPath, barcode, name, finalPrice.toFixed(2), "", "Singles", "Pokemon", quantity);
+    // append condition (previously called grade) to CSV
+    appendCsvRows(csvPath, barcode, name, finalPrice.toFixed(2), condition, "Singles", "Pokemon", quantity);
 
     if (result.updated) {
-      console.log(`Updated inventory for ${name}`);
+      console.log(`Updated inventory for ${name} (${condition})`);
     } else if (result.isNewProduct) {
-      console.log(`Created new product with metafield: ${name}`);
+      console.log(`Created new product with metafields: ${name} (${condition})`);
     } else {
       console.log(`Product created as draft (reason: unknown)`);
     }

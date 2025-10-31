@@ -1,11 +1,20 @@
-// draft.js
+// src/shopify/draft.js
 import axios from "axios";
 import { graphqlPost, buildShopifyBase, getShopifyToken } from "./graphql.js";
 import { adjustInventory } from "./inventory.js";
-import { setSourceUrlMetafield } from "./metafields.js";
+import { setProductMetafields, findProductBySourceUrlAndCondition } from "./metafields.js";
 import { generateEAN13 } from "../utils/barcode.js";
 
-export default async function createDraftAndPublishToPos({ title, price, quantity, sourceUrl }, config) {
+/**
+ * Create or update a product tied to a specific sourceUrl + condition.
+ *
+ * params: { title, price, quantity, sourceUrl, condition }
+ * config: app config object
+ *
+ * Returns an object:
+ * { productId, inventoryItemId, isNewProduct: bool, updated: bool, barcode: string|null }
+ */
+export default async function createDraftAndPublishToPos({ title, price, quantity, sourceUrl, condition }, config) {
   const base = buildShopifyBase();
   const token = getShopifyToken();
   if (!base || !token) throw new Error("Missing SHOPIFY_STORE_URL or SHOPIFY_ADMIN_TOKEN.");
@@ -14,46 +23,27 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
   let inventoryItemId = null;
   let barcode = null;
   let isNewProduct = false;
+  let updated = false;
 
-  // 1) Try to find existing product by metafield
+  // 1) Try to find existing product by BOTH metafields (source_url + condition)
   try {
-    const query = {
-      query: `
-        query {
-          products(first: 1, query: "metafields.pricecharting.source_url:\\"${sourceUrl}\\"") {
-            edges {
-              node {
-                id
-                title
-                variants(first: 1) {
-                  edges {
-                    node {
-                      id
-                      barcode
-                      inventoryItem { id }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      `
-    };
-    const res = await graphqlPost(query);
-    const existingEdge = res?.data?.products?.edges?.[0];
+    const existingEdge = await findProductBySourceUrlAndCondition(sourceUrl, condition);
     if (existingEdge) {
       productId = existingEdge.node.id;
       const variantNode = existingEdge.node.variants?.edges?.[0]?.node;
-      inventoryItemId = variantNode?.inventoryItem?.id.match(/\/InventoryItem\/(\d+)$/)?.[1] || null;
+      const invGid = variantNode?.inventoryItem?.id || null; // e.g. gid://shopify/InventoryItem/12345
+      // extract numeric id if present
+      const invMatch = typeof invGid === "string" ? invGid.match(/\/InventoryItem\/(\d+)$/) : null;
+      inventoryItemId = invMatch?.[1] || null;
       barcode = variantNode?.barcode || null;
-      console.log("Existing product found:", existingEdge.node.title, productId, "Barcode:", barcode);
+      updated = true;
+      console.log("Existing product found by source_url & condition:", existingEdge.node.title, productId, "Barcode:", barcode);
     }
   } catch (err) {
     console.warn("Failed to query existing product:", err.message || err);
   }
 
-  // 2) If not found, create new product
+  // 2) If not found, create new product (REST endpoint)
   if (!productId) {
     const payload = {
       product: {
@@ -82,8 +72,8 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
       const product = createRes.data?.product;
       productId = product?.id;
       const variant = product?.variants?.[0];
-      inventoryItemId = variant?.inventory_item_id;
-      barcode = variant?.barcode || null; // may be empty; can set EAN/UPC via Shopify
+      inventoryItemId = variant?.inventory_item_id || null;
+      barcode = variant?.barcode || null;
       isNewProduct = true;
       console.log(`Created new draft product ${title} (id: ${productId}) Barcode: ${barcode}`);
     } catch (err) {
@@ -99,10 +89,10 @@ export default async function createDraftAndPublishToPos({ title, price, quantit
     } catch (err) { /* logs inside adjustInventory */ }
   }
 
-  // 4) Attach / update metafield
+  // 4) Attach / update both metafields (source_url and condition)
   try {
-    await setSourceUrlMetafield(productId, sourceUrl);
-  } catch (err) { /* logs inside setSourceUrlMetafield */ }
+    await setProductMetafields(productId, sourceUrl, condition);
+  } catch (err) { /* logs inside setProductMetafields */ }
 
-  return { productId, inventoryItemId, isNewProduct, barcode };
+  return { productId, inventoryItemId, isNewProduct, updated, barcode };
 }
