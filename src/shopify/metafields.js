@@ -3,13 +3,13 @@ import { graphqlPost } from "./graphql.js";
 
 /**
  * Set both source_url and condition metafields on a product.
- * productId: numeric or GID suffix (the existing code stores numeric id)
- * sourceUrl: string
- * condition: string (e.g. "Damaged", "Ungraded", "Grade 9")
+ * productId: numeric or GID suffix
+ * fields: { sourceUrl: string, condition: string }
  */
-export async function setProductMetafields(productId, sourceUrl, condition) {
+export async function setProductMetafields(productId, fields = {}) {
   try {
-    const cleanUrl = String(sourceUrl || "").split("?")[0];
+    const cleanUrl = String(fields.sourceUrl || "").split("?")[0];
+    const cond = String(fields.condition || "Ungraded").trim() || "Ungraded";
     const ownerId = `gid://shopify/Product/${productId}`;
 
     const metafields = [
@@ -24,7 +24,7 @@ export async function setProductMetafields(productId, sourceUrl, condition) {
         namespace: "pricecharting",
         key: "condition",
         type: "single_line_text_field",
-        value: String(condition || "").trim() || "Ungraded",
+        value: cond,
         ownerId,
       },
     ];
@@ -46,7 +46,6 @@ export async function setProductMetafields(productId, sourceUrl, condition) {
     if (errors?.length) {
       console.warn("Metafield set returned userErrors:", JSON.stringify(errors, null, 2));
     } else {
-      // keep logs minimal
       console.log(`Set metafields pricecharting.source_url and pricecharting.condition on product ${productId}`);
     }
     return res;
@@ -58,19 +57,12 @@ export async function setProductMetafields(productId, sourceUrl, condition) {
 
 /**
  * Find a product by BOTH source_url and condition metafields.
- * Returns the first matching product node (or null).
- *
- * Note: this uses the storefront admin 'query' string which supports searching metafields via:
- *   metafields.namespace.key:"value"
- *
- * Both values are quoted to handle spaces; we also escape double quotes if present.
  */
 export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
   try {
     const cleanUrl = String(sourceUrl || "").split("?")[0].replace(/"/g, '\\"');
     const cond = String(condition || "Ungraded").replace(/"/g, '\\"');
 
-    // Build a Shopify product search query that matches both metafields
     const productQuery = `metafields.pricecharting.source_url:"${cleanUrl}" metafields.pricecharting.condition:"${cond}"`;
 
     const gql = {
@@ -85,10 +77,14 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
                   edges {
                     node {
                       id
+                      price
                       barcode
                       inventoryItem { id }
                     }
                   }
+                }
+                metafields(first: 10, namespace: "pricecharting") {
+                  edges { node { key value } }
                 }
               }
             }
@@ -100,9 +96,64 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
 
     const res = await graphqlPost(gql);
     const edge = res?.data?.products?.edges?.[0] || null;
-    return edge;
+    if (!edge) return null;
+
+    const node = edge.node;
+    const variantNode = node.variants?.edges?.[0]?.node;
+
+    const metafields = Object.fromEntries(
+      (node.metafields?.edges || []).map((e) => [e.node.key, e.node.value])
+    );
+
+    return {
+      id: node.id,
+      title: node.title,
+      variantId: variantNode?.id,
+      inventoryItemId: variantNode?.inventoryItem?.id,
+      price: parseFloat(variantNode?.price || 0),
+      barcode: variantNode?.barcode || "",
+      sourceUrl: metafields.source_url || "",
+      condition: metafields.condition || "",
+    };
   } catch (err) {
-    console.warn("Failed to query product by source_url & condition:", err.response?.status || err.message || err);
+    console.warn("Failed to query product by source_url & condition:", err.message || err);
+    return null;
+  }
+}
+
+/**
+ * Fetch the Shopify location ID (for inventory updates)
+ * Returns the first active location ID, or null on failure.
+ */
+export async function getShopifyLocationId() {
+  try {
+    const gql = {
+      query: `
+        {
+          locations(first: 1) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      `,
+    };
+
+    const res = await graphqlPost(gql);
+    const edge = res?.data?.locations?.edges?.[0];
+    if (!edge) {
+      console.warn("No Shopify locations found via API");
+      return null;
+    }
+
+    const locationId = edge.node.id;
+    console.log(`Using Shopify location: ${edge.node.name} (${locationId})`);
+    return locationId;
+  } catch (err) {
+    console.warn("Failed to fetch Shopify location ID:", err.message || err);
     return null;
   }
 }

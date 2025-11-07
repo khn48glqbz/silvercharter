@@ -1,98 +1,117 @@
 // src/shopify/draft.js
-import axios from "axios";
-import { graphqlPost, buildShopifyBase, getShopifyToken } from "./graphql.js";
-import { adjustInventory } from "./inventory.js";
-import { setProductMetafields, findProductBySourceUrlAndCondition } from "./metafields.js";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+import Shopify from "shopify-api-node";
+import { findProductBySourceUrlAndCondition, setProductMetafields, getShopifyLocationId } from "./metafields.js";
 import { generateEAN13 } from "../utils/barcode.js";
+import { adjustInventory } from "./inventory.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, "../../data/.env") });
+
+const shopify = new Shopify({
+  shopName: process.env.SHOPIFY_STORE_URL.replace(/^https?:\/\//, "").replace(/\/$/, ""),
+  accessToken: process.env.SHOPIFY_ADMIN_TOKEN,
+  apiVersion: "2024-04",
+});
 
 /**
- * Create or update a product tied to a specific sourceUrl + condition.
- *
- * params: { title, price, quantity, sourceUrl, condition }
- * config: app config object
- *
- * Returns an object:
- * { productId, inventoryItemId, isNewProduct: bool, updated: bool, barcode: string|null }
+ * Create or update a Shopify product draft and sync inventory.
+ * Includes debug logging for inventory updates.
  */
-export default async function createDraftAndPublishToPos({ title, price, quantity, sourceUrl, condition }, config) {
-  const base = buildShopifyBase();
-  const token = getShopifyToken();
-  if (!base || !token) throw new Error("Missing SHOPIFY_STORE_URL or SHOPIFY_ADMIN_TOKEN.");
+export default async function createDraftAndPublishToPos(card, config) {
+  let { title, price, quantity, sourceUrl, condition, barcode } = card;
 
-  let productId = null;
-  let inventoryItemId = null;
-  let barcode = null;
-  let isNewProduct = false;
-  let updated = false;
-
-  // 1) Try to find existing product by BOTH metafields (source_url + condition)
-  try {
-    const existingEdge = await findProductBySourceUrlAndCondition(sourceUrl, condition);
-    if (existingEdge) {
-      productId = existingEdge.node.id;
-      const variantNode = existingEdge.node.variants?.edges?.[0]?.node;
-      const invGid = variantNode?.inventoryItem?.id || null; // e.g. gid://shopify/InventoryItem/12345
-      // extract numeric id if present
-      const invMatch = typeof invGid === "string" ? invGid.match(/\/InventoryItem\/(\d+)$/) : null;
-      inventoryItemId = invMatch?.[1] || null;
-      barcode = variantNode?.barcode || null;
-      updated = true;
-      console.log("Existing product found by source_url & condition:", existingEdge.node.title, productId, "Barcode:", barcode);
-    }
-  } catch (err) {
-    console.warn("Failed to query existing product:", err.message || err);
+  // If no barcode is provided, generate one
+  if (!barcode) {
+    barcode = generateEAN13(title, condition);
   }
 
-  // 2) If not found, create new product (REST endpoint)
-  if (!productId) {
-    const payload = {
-      product: {
-        title,
-        vendor: config?.shopify?.vendor || "The Pokemon Company",
-        product_type: "Pokemon Card",
-        status: "draft",
-        variants: [
-          {
-            price: Number(price).toFixed(2),
-            inventory_management: "shopify",
-            inventory_quantity: 0,
-            weight: 2,
-            weight_unit: "g",
-            barcode: generateEAN13(),
-          }
-        ],
-        tags: [config?.shopify?.collection || "Singles"],
-      }
-    };
+  try {
+    const existing = await findProductBySourceUrlAndCondition(sourceUrl, condition);
+    const locationId = await getShopifyLocationId();
+    if (!locationId) {
+      console.warn("Could not get Shopify locationId; inventory updates will be skipped.");
+    }
 
-    try {
-      const createRes = await axios.post(`${base}/admin/api/2024-07/products.json`, payload, {
-        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+    if (existing) {
+      console.log(`Updating existing product: ${title} (${condition})`);
+
+      // Debug: log all IDs and quantity
+      console.log("DEBUG: Inventory update payload", {
+        inventoryItemId: existing.inventoryItemId,
+        locationId,
+        quantity,
       });
-      const product = createRes.data?.product;
-      productId = product?.id;
-      const variant = product?.variants?.[0];
-      inventoryItemId = variant?.inventory_item_id || null;
-      barcode = variant?.barcode || null;
-      isNewProduct = true;
-      console.log(`Created new draft product ${title} (id: ${productId}) Barcode: ${barcode}`);
-    } catch (err) {
-      console.error("Product creation failed:", err.response?.status, err.response?.data || err.message);
-      throw err;
+
+      if (existing.inventoryItemId && locationId) {
+        try {
+          const numericInventoryItemId = existing.inventoryItemId.replace(/\D/g, "");
+          const invRes = await adjustInventory(numericInventoryItemId, quantity);
+          console.log("Inventory adjusted successfully:", invRes);
+        } catch (err) {
+          console.error("Inventory adjustment failed:", err.response?.data || err.message);
+        }
+      } else {
+        console.warn(`No inventoryItemId found for ${title}. Inventory not updated.`);
+      }
+
+      // Update variant price + barcode if we have a variant
+      if (existing.variantId) {
+        try {
+          const updateRes = await shopify.product.update(existing.id, {
+            variants: [{ id: existing.variantId, price, barcode }],
+          });
+          console.log("Variant update response:", updateRes);
+        } catch (err) {
+          console.error("Variant update failed:", err.response?.body || err.message, err.response?.status);
+        }
+      }
+
+      // Ensure metafields
+      await setProductMetafields(existing.id, { sourceUrl, condition });
+
+      return { ...existing, barcode };
     }
+
+    // Create new draft product
+    console.log(`Uploading new product: ${title} (${condition}) — GBP ${price.toFixed(2)}`);
+    const newProduct = await shopify.product.create({
+      title,
+      status: "draft",
+      variants: [
+        {
+          price,
+          inventory_management: "shopify",
+          inventory_quantity: quantity,
+          barcode,
+        },
+      ],
+      metafields: [
+        { namespace: "pricecharting", key: "source_url", value: sourceUrl, type: "single_line_text_field" },
+        { namespace: "pricecharting", key: "condition", value: condition, type: "single_line_text_field" },
+      ],
+    });
+
+    // Adjust inventory for new product
+    const newInventoryItemId = newProduct.variants?.[0]?.inventory_item_id?.replace(/\D/g, "");
+    if (newInventoryItemId && quantity && locationId) {
+      try {
+        const invRes = await adjustInventory(newInventoryItemId, quantity);
+        console.log("Inventory adjusted for new product:", invRes);
+      } catch (err) {
+        console.error("Inventory adjustment failed for new product:", err.response?.data || err.message);
+      }
+    }
+
+    console.log(`Draft created: ${newProduct.title}`);
+    return newProduct;
+
+  } catch (err) {
+    console.error("Error importing card:", err.response?.body || err.message, err.response?.status);
+    throw err;
   }
-
-  // 3) Adjust inventory
-  if (inventoryItemId && quantity > 0) {
-    try {
-      await adjustInventory(inventoryItemId, quantity);
-    } catch (err) { /* logs inside adjustInventory */ }
-  }
-
-  // 4) Attach / update both metafields (source_url and condition)
-  try {
-    await setProductMetafields(productId, sourceUrl, condition);
-  } catch (err) { /* logs inside setProductMetafields */ }
-
-  return { productId, inventoryItemId, isNewProduct, updated, barcode };
 }

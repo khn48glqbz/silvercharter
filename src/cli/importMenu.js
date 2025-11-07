@@ -1,8 +1,10 @@
+// src/cli/importMenu.js
 import inquirer from "inquirer";
-import scrapeCard from "../scraper/scrapeCard.js";
 import { calculateFinalPrice, getFormulaForCondition } from "../utils/pricing.js";
 import createDraftAndPublishToPos from "../shopify/draft.js";
 import { appendCsvRows } from "../utils/csv.js";
+import { findProductBySourceUrlAndCondition } from "../shopify/metafields.js";
+import scrapeCard from "../scraper/scrapeCard.js";
 
 export default async function importMenu(config, csvPath) {
   while (true) {
@@ -102,36 +104,75 @@ Type "exit" to quit
   }
 }
 
-async function handleImportUrl(url, quantity, condition, formula, config, csvPath) {
-  // Use dummy scrape if grading logic not implemented yet
-  const scraped = await scrapeCard(url).catch(() => null) || { name: "Unknown Card", price: 10.0 };
-
-  const { name, price } = scraped;
-
-  const { final: finalPrice } = await calculateFinalPrice(price, config, condition);
-  const priceStr = `${config.currency || "GBP"} ${finalPrice.toFixed(2)}`;
-
-  console.log(`Uploading ${name} (${quantity}x, ${condition}) — ${priceStr}`);
+export async function handleImportUrl(url, quantity, condition, formula, config, csvPath) {
+  let existingProduct = null;
 
   try {
-    // pass condition through to Shopify create/update
-    const result = await createDraftAndPublishToPos(
-      { title: name, price: finalPrice, quantity, sourceUrl: url, condition },
-      config
-    );
-
-    const barcode = result.barcode || "";
-    // append condition (previously called grade) to CSV
-    appendCsvRows(csvPath, barcode, name, finalPrice.toFixed(2), condition, "Singles", "Pokemon", quantity);
-
-    if (result.updated) {
-      console.log(`Updated inventory for ${name} (${condition})`);
-    } else if (result.isNewProduct) {
-      console.log(`Created new product with metafields: ${name} (${condition})`);
-    } else {
-      console.log(`Product created as draft (reason: unknown)`);
-    }
+    existingProduct = await findProductBySourceUrlAndCondition(url, condition);
   } catch (err) {
-    console.error(`Import error: ${err.message || err}`);
+    console.warn("Shopify pre-check failed (continuing to scrape):", err.message);
   }
+
+  if (existingProduct) {
+    console.log(`Shopify listing already exists for ${existingProduct.title} (${condition}). Updating inventory...`);
+    try {
+      await createDraftAndPublishToPos(
+        {
+          title: existingProduct.title,
+          price: existingProduct.price,
+          quantity,
+          sourceUrl: url,
+          condition,
+          barcode: existingProduct.barcode,
+        },
+        config
+      );
+    } catch (err) {
+      console.warn(`Failed to update inventory for ${existingProduct.title}:`, err.message);
+    }
+
+    appendCsvRows(csvPath, existingProduct.barcode ?? "", existingProduct.title, existingProduct.price.toFixed(2), condition, "Singles", "Pokemon", quantity);
+    console.log(`Updated inventory for ${existingProduct.title} (${condition})`);
+    return;
+  }
+
+  // Scrape PriceCharting if product not found
+  const scraped = await scrapeCard(url);
+  let basePrice = scraped.price;
+  let applyFormula = true;
+
+  if (basePrice == null || isNaN(basePrice)) {
+    const { manualPrice } = await inquirer.prompt([
+      {
+        type: "input",
+        name: "manualPrice",
+        message: `No price found for ${scraped.name} (${condition}). Enter manual price:`,
+        validate: (input) => (!isNaN(parseFloat(input)) && parseFloat(input) >= 0) || "Enter a valid non-negative number",
+      },
+    ]);
+    basePrice = parseFloat(manualPrice);
+    applyFormula = false;
+  }
+
+  const finalPrice = applyFormula
+    ? (await calculateFinalPrice(basePrice, config, condition)).final
+    : basePrice;
+
+  console.log(`Uploading ${scraped.name} (${quantity}x, ${condition}) — ${config.currency || "GBP"} ${finalPrice.toFixed(2)}`);
+
+  const result = await createDraftAndPublishToPos(
+    {
+      title: scraped.name,
+      price: finalPrice,
+      quantity,
+      sourceUrl: url,
+      condition,
+      barcode: scraped.barcode ?? "",
+    },
+    config
+  );
+
+  appendCsvRows(csvPath, result?.variants?.[0]?.barcode ?? "", scraped.name, finalPrice.toFixed(2), condition, "Singles", "Pokemon", quantity);
+
+  console.log(`Created new product with metafields: ${scraped.name} (${condition})`);
 }
