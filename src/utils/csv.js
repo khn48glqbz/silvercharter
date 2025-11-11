@@ -11,9 +11,12 @@ function ensureLabelsDir() {
 export function createSessionCSVWithId(sessionId) {
   ensureLabelsDir();
   const filePath = path.join(LABELS_DIR, `session_${sessionId}.csv`);
-  // CSV header now lists Condition instead of Grade
   if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, "Variant Barcode,Title,Variant Price,Condition,Type,Game\n", "utf8");
+    fs.writeFileSync(
+      filePath,
+      "Variant Barcode,Title,Game,Expansion,Language,Type,Condition,Variant Price\n",
+      "utf8"
+    );
   }
   return filePath;
 }
@@ -23,17 +26,32 @@ export function createSessionCSVWithId(sessionId) {
  * @param {*} filePath 
  * @param {*} barcode
  * @param {*} title 
- * @param {*} priceStr 
- * @param {*} condition 
+ * @param {*} game
+ * @param {*} expansion
+ * @param {*} language
  * @param {*} type 
- * @param {*} game 
+ * @param {*} condition 
+ * @param {*} priceStr 
  * @param {*} quantity 
  */
-export function appendCsvRows(filePath, barcode, title, priceStr, condition = "-", type = "Singles", game = "Pokémon", quantity = 1) {
+export function appendCsvRows(
+  filePath,
+  barcode,
+  title,
+  game = "Unknown Game",
+  expansion = "Unknown Expansion",
+  language = "EN",
+  type = "Singles",
+  condition = "-",
+  priceStr = "0.00",
+  quantity = 1
+) {
   const esc = (s) => `"${String(s).replace(/"/g, '""')}"`;
   let out = "";
   for (let i = 0; i < quantity; i++) {
-    out += [esc(barcode), esc(title), esc(priceStr), esc(condition), esc(type), esc(game)].join(",") + "\n";
+    out +=
+      [esc(barcode), esc(title), esc(game), esc(expansion), esc(language), esc(type), esc(condition), esc(priceStr)].join(",") +
+      "\n";
   }
   fs.appendFileSync(filePath, out, "utf8");
 }

@@ -124,6 +124,10 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
           sourceUrl: url,
           condition,
           barcode: existingProduct.barcode,
+          vendor: existingProduct.vendor,
+          game: existingProduct.game,
+          expansion: existingProduct.expansion,
+          language: existingProduct.language,
         },
         config
       );
@@ -131,13 +135,32 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
       console.warn(`Failed to update inventory for ${existingProduct.title}:`, err.message);
     }
 
-    appendCsvRows(csvPath, existingProduct.barcode ?? "", existingProduct.title, existingProduct.price.toFixed(2), condition, "Singles", "Pokemon", quantity);
+    const csvGame = existingProduct.game || "Unknown Game";
+    const csvExpansion = existingProduct.expansion || "Unknown Expansion";
+    const csvLanguage = existingProduct.language || "EN";
+    appendCsvRows(
+      csvPath,
+      existingProduct.barcode ?? "",
+      existingProduct.title,
+      csvGame,
+      csvExpansion,
+      csvLanguage,
+      "Singles",
+      condition,
+      existingProduct.price.toFixed(2),
+      quantity
+    );
     console.log(`Updated inventory for ${existingProduct.title} (${condition})`);
     return;
   }
 
   // Scrape PriceCharting if product not found
   const scraped = await scrapeCard(url);
+  const metadata = scraped.metadata || {};
+  const game = metadata.game || "Unknown Game";
+  const expansion = metadata.expansion || "Unknown Expansion";
+  const languageCode = metadata.languageCode || "EN";
+  const vendor = metadata.vendor || game;
   const priceTable = scraped.prices || {};
   const userCurrency = (config?.currency || "USD").toUpperCase();
   const hasDedicatedPrice = Object.prototype.hasOwnProperty.call(priceTable, condition);
@@ -184,11 +207,26 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
       sourceUrl: url,
       condition,
       barcode: scraped.barcode ?? "",
+      vendor,
+      game,
+      expansion,
+      language: languageCode,
     },
     config
   );
 
-  appendCsvRows(csvPath, result?.variants?.[0]?.barcode ?? "", scraped.name, finalPrice.toFixed(2), condition, "Singles", "Pokemon", quantity);
+  appendCsvRows(
+    csvPath,
+    result?.variants?.[0]?.barcode ?? scraped.barcode ?? "",
+    scraped.name,
+    game,
+    expansion,
+    languageCode,
+    "Singles",
+    condition,
+    finalPrice.toFixed(2),
+    quantity
+  );
 
   console.log(`Created new product with metafields: ${scraped.name} (${condition})`);
 }

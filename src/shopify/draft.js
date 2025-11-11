@@ -32,7 +32,7 @@ const shopify = new Shopify({
  * Includes debug logging for inventory updates.
  */
 export default async function createDraftAndPublishToPos(card, config) {
-  let { title, price, quantity, sourceUrl, condition, barcode } = card;
+  let { title, price, quantity, sourceUrl, condition, barcode, vendor, game, expansion, language } = card;
 
   // If no barcode is provided, generate one
   if (!barcode) {
@@ -81,7 +81,7 @@ export default async function createDraftAndPublishToPos(card, config) {
       }
 
       // Ensure metafields
-      await setProductMetafields(existing.id, { sourceUrl, condition });
+      await setProductMetafields(existing.id, { sourceUrl, condition, game, expansion, language });
 
       return { ...existing, barcode };
     }
@@ -91,6 +91,7 @@ export default async function createDraftAndPublishToPos(card, config) {
     const newProduct = await shopify.product.create({
       title,
       status: "draft",
+      vendor: vendor || game || "Unknown Vendor",
       variants: [
         {
           price,
@@ -104,6 +105,8 @@ export default async function createDraftAndPublishToPos(card, config) {
         { namespace: "pricecharting", key: "condition", value: condition, type: "single_line_text_field" },
       ],
     });
+
+    await setProductMetafields(newProduct.id, { sourceUrl, condition, game, expansion, language });
 
     console.log(`Draft created: ${newProduct.title}`);
     return newProduct;

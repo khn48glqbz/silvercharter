@@ -1,6 +1,7 @@
 // src/scraper/scrapeCard.js
 import axios from "axios";
 import * as cheerio from "cheerio";
+import { getVendorsMap, getLanguagesMap } from "../utils/staticData.js";
 
 const CONDITION_SELECTORS = {
   Ungraded: "td#used_price",
@@ -10,6 +11,10 @@ const CONDITION_SELECTORS = {
   "Grade 9.5": "td#box_only_price",
   "Grade 10": "td#manual_only_price",
 };
+
+function escapeRegExp(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function parsePrice(rawText) {
   if (!rawText) return null;
@@ -25,6 +30,76 @@ function extractPrice($, selector) {
   if (!cell.length) return null;
   const priceText = cell.find(".price.js-price").first().text();
   return parsePrice(priceText);
+}
+
+function deriveSetMetadata(rawSetText = "") {
+  const vendors = getVendorsMap();
+  const languages = getLanguagesMap();
+  const normalized = rawSetText.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return {
+      setLabel: "",
+      game: "Unknown Game",
+      vendor: "Unknown Vendor",
+      languageName: "English",
+      languageCode: "EN",
+      expansion: "Unknown Expansion",
+    };
+  }
+
+  const vendorEntries = Object.entries(vendors || {}).sort((a, b) => b[0].length - a[0].length);
+  let game = normalized.split(" ")[0] || "Unknown Game";
+  let vendor = vendors?.[game] || game;
+  let remainder = normalized;
+
+  for (const [name, vendorName] of vendorEntries) {
+    const regex = new RegExp(`^${escapeRegExp(name)}\\b`, "i");
+    const match = remainder.match(regex);
+    if (match) {
+      game = name;
+      vendor = vendorName || name;
+      remainder = remainder.slice(match[0].length).trim();
+      break;
+    }
+  }
+
+  if (!vendor) vendor = game || "Unknown Vendor";
+  if (!remainder) remainder = "";
+
+  const languageEntries = Object.entries(languages || {}).sort((a, b) => b[0].length - a[0].length);
+  let languageName = "English";
+  let languageCode = "EN";
+
+  const tokens = remainder.split(/\s+/).filter(Boolean);
+  for (const [langName, langCode] of languageEntries) {
+    const lowerName = langName.toLowerCase();
+    const matchToken = tokens.find((token) => {
+      const lowerToken = token.toLowerCase();
+      return lowerToken === lowerName || lowerToken.startsWith(lowerName);
+    });
+    if (matchToken) {
+      languageName = langName;
+      languageCode = langCode || langName.slice(0, 2).toUpperCase();
+      remainder = tokens
+        .filter((token) => token !== matchToken)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      break;
+    }
+  }
+
+  const expansion = remainder || "Unknown Expansion";
+
+  return {
+    setLabel: normalized,
+    game,
+    vendor,
+    languageName,
+    languageCode,
+    expansion,
+  };
 }
 
 /**
@@ -74,14 +149,46 @@ export default async function scrapeCard(urlInput) {
         prices.Ungraded = parsePrice(fallback);
       }
 
+      let setLabel = "";
+      let metadata = null;
+      const setAnchor = $("a:has(img.set-logo)").first();
+      if (setAnchor.length) {
+        setLabel = setAnchor.clone().children().remove().end().text().trim();
+        metadata = deriveSetMetadata(setLabel);
+        // TODO: Revisit setAnchor.find("img.set-logo").attr("src") for expansion icon scraping.
+      } else {
+        const fallbackSet = $('a[href*="/console/"]').first().text();
+        setLabel = fallbackSet.trim();
+        metadata = deriveSetMetadata(setLabel);
+      }
+
       const legacyPrice = prices.Ungraded ?? null;
 
-      return { existing: false, name, price: legacyPrice, prices };
+      return {
+        existing: false,
+        name,
+        price: legacyPrice,
+        prices,
+        metadata,
+      };
     } catch (err) {
       console.warn(`Scrape attempt ${attempt} failed:`, err.message);
       if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
   }
 
-  return { existing: false, name: "Unknown Card", price: null, prices: {} };
+  return {
+    existing: false,
+    name: "Unknown Card",
+    price: null,
+    prices: {},
+    metadata: {
+      setLabel: "",
+      game: "Unknown Game",
+      vendor: "Unknown Vendor",
+      languageName: "English",
+      languageCode: "EN",
+      expansion: "Unknown Expansion",
+    },
+  };
 }

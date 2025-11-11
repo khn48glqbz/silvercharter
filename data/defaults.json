@@ -10,10 +10,5 @@
     "Grade 10": "*2.5",
     "roundTo99": true
   },
-  "shopify": {
-    "vendor": "The Pokemon Company",
-    "brand": "Pokemon",
-    "collection": "Singles"
-  },
   "sessionID": 0
 }

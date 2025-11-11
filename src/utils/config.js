@@ -17,11 +17,6 @@ const DEFAULT_CONFIG = {
     "Grade 10": "*2.5",
     roundTo99: true,
   },
-  shopify: {
-    vendor: "The Pokemon Company",
-    brand: "Pokemon",
-    collection: "Singles",
-  },
   sessionID: 0,
 };
 
@@ -34,8 +29,6 @@ function normalizeConfig(rawConfig = {}) {
 
   if (!normalized.currency) normalized.currency = DEFAULT_CONFIG.currency;
   if (typeof normalized.sessionID !== "number") normalized.sessionID = 0;
-  if (!normalized.shopify) normalized.shopify = { ...DEFAULT_CONFIG.shopify };
-
   // Handle legacy "pricing" shape by upgrading to formula table
   if (!normalized.formula || typeof normalized.formula !== "object") {
     normalized.formula = {};

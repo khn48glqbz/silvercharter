@@ -10,24 +10,62 @@ export async function setProductMetafields(productId, fields = {}) {
   try {
     const cleanUrl = String(fields.sourceUrl || "").split("?")[0];
     const cond = String(fields.condition || "Ungraded").trim() || "Ungraded";
+    const game = (fields.game || "").trim();
+    const expansion = (fields.expansion || "").trim();
+    const language = (fields.language || "").trim();
     const ownerId = `gid://shopify/Product/${productId}`;
 
-    const metafields = [
-      {
+    const metafields = [];
+
+    if (cleanUrl) {
+      metafields.push({
         namespace: "pricecharting",
         key: "source_url",
         type: "single_line_text_field",
         value: cleanUrl,
         ownerId,
-      },
-      {
+      });
+    }
+
+    if (cond) {
+      metafields.push({
         namespace: "pricecharting",
         key: "condition",
         type: "single_line_text_field",
         value: cond,
         ownerId,
-      },
-    ];
+      });
+    }
+
+    if (game) {
+      metafields.push({
+        namespace: "pricecharting",
+        key: "game",
+        type: "single_line_text_field",
+        value: game,
+        ownerId,
+      });
+    }
+
+    if (expansion) {
+      metafields.push({
+        namespace: "pricecharting",
+        key: "expansion",
+        type: "single_line_text_field",
+        value: expansion,
+        ownerId,
+      });
+    }
+
+    if (language) {
+      metafields.push({
+        namespace: "pricecharting",
+        key: "language",
+        type: "single_line_text_field",
+        value: language,
+        ownerId,
+      });
+    }
 
     const gql = {
       query: `
@@ -46,7 +84,7 @@ export async function setProductMetafields(productId, fields = {}) {
     if (errors?.length) {
       console.warn("Metafield set returned userErrors:", JSON.stringify(errors, null, 2));
     } else {
-      console.log(`Set metafields pricecharting.source_url and pricecharting.condition on product ${productId}`);
+      console.log(`Updated pricecharting metafields on product ${productId}`);
     }
     return res;
   } catch (err) {
@@ -72,6 +110,7 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
             edges {
               node {
                 id
+                vendor
                 title
                 variants(first: 1) {
                   edges {
@@ -108,12 +147,16 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
     return {
       id: node.id,
       title: node.title,
+      vendor: node.vendor || "",
       variantId: variantNode?.id,
       inventoryItemId: variantNode?.inventoryItem?.id,
       price: parseFloat(variantNode?.price || 0),
       barcode: variantNode?.barcode || "",
       sourceUrl: metafields.source_url || "",
       condition: metafields.condition || "",
+      game: metafields.game || "",
+      expansion: metafields.expansion || "",
+      language: metafields.language || "",
     };
   } catch (err) {
     console.warn("Failed to query product by source_url & condition:", err.message || err);
