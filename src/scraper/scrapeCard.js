@@ -2,16 +2,42 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
 
+const CONDITION_SELECTORS = {
+  Ungraded: "td#used_price",
+  "Grade 7": "td#complete_price",
+  "Grade 8": "td#new_price",
+  "Grade 9": "td#graded_price",
+  "Grade 9.5": "td#box_only_price",
+  "Grade 10": "td#manual_only_price",
+};
+
+function parsePrice(rawText) {
+  if (!rawText) return null;
+  const trimmed = rawText.replace(/\s+/g, " ").trim();
+  if (!trimmed || trimmed === "-" || trimmed.toLowerCase() === "n/a") return null;
+  const numeric = parseFloat(trimmed.replace(/[^0-9.,-]/g, "").replace(/,/g, ""));
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function extractPrice($, selector) {
+  if (!selector) return null;
+  const cell = $(selector);
+  if (!cell.length) return null;
+  const priceText = cell.find(".price.js-price").first().text();
+  return parsePrice(priceText);
+}
+
 /**
- * Scrapes PriceCharting for a card's price.
- * Returns { existing: false, name, price }.
- * No Shopify logic here.
+ * Scrapes PriceCharting for a card's price(s).
+ * Returns { existing: false, name, price, prices }.
+ * - price: legacy field (Ungraded value if present)
+ * - prices: map of condition -> numeric price or null
  */
 export default async function scrapeCard(urlInput) {
   let url = String(urlInput || "").trim();
   if (!url) {
     console.error("No URL provided.");
-    return { existing: false, name: "Unknown Card", price: null };
+    return { existing: false, name: "Unknown Card", price: null, prices: {} };
   }
 
   if (!/^https?:\/\//i.test(url)) url = "https://" + url.replace(/^\/+/, "");
@@ -38,27 +64,24 @@ export default async function scrapeCard(urlInput) {
         $("h1").first().text().trim() ||
         "Unknown Card";
 
-      let priceText =
-        $("td#used_price .price.js-price").first().text().trim() ||
-        $("span.price.js-price").first().text().trim();
-
-      if (!priceText) {
-        console.warn("Price element not found. Returning null.");
-        return { existing: false, name, price: null };
+      const prices = {};
+      for (const [condition, selector] of Object.entries(CONDITION_SELECTORS)) {
+        prices[condition] = extractPrice($, selector);
       }
 
-      const numeric = parseFloat(priceText.replace(/[£$,]/g, ""));
-      if (Number.isNaN(numeric)) {
-        console.warn("Price parse failed:", priceText);
-        return { existing: false, name, price: null };
+      if (prices.Ungraded == null) {
+        const fallback = $("span.price.js-price").first().text();
+        prices.Ungraded = parsePrice(fallback);
       }
 
-      return { existing: false, name, price: numeric };
+      const legacyPrice = prices.Ungraded ?? null;
+
+      return { existing: false, name, price: legacyPrice, prices };
     } catch (err) {
       console.warn(`Scrape attempt ${attempt} failed:`, err.message);
       if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
   }
 
-  return { existing: false, name: "Unknown Card", price: null };
+  return { existing: false, name: "Unknown Card", price: null, prices: {} };
 }

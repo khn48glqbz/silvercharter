@@ -37,8 +37,16 @@ export function roundUpTo99(value) {
   if (typeof value !== "number" || isNaN(value)) return value;
   const cents = Math.round((value - Math.floor(value)) * 100);
   if (cents === 99) return Number(value.toFixed(2));
-  const nextWhole = Math.ceil(value);
-  return Number((nextWhole - 0.01).toFixed(2));
+
+  let nextWhole = Math.ceil(value);
+  let candidate = Number((nextWhole - 0.01).toFixed(2));
+
+  if (candidate < value) {
+    nextWhole += 1;
+    candidate = Number((nextWhole - 0.01).toFixed(2));
+  }
+
+  return candidate;
 }
 
 /**

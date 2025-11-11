@@ -25,7 +25,11 @@ export default async function settingsMenu(config) {
     } else if (settingsChoice === "Pricing Settings") {
       await pricingSettings(config);
     } else if (settingsChoice === "Restore Default Settings") {
-      restoreDefaults();
+      const restored = restoreDefaults();
+      // Mutate the shared config object so the running session uses refreshed defaults
+      Object.keys(config).forEach((key) => delete config[key]);
+      Object.assign(config, restored);
+      console.log("Settings restored to defaults.");
     } else if (settingsChoice === "Return") {
       break;
     }

@@ -12,9 +12,18 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, "../../data/.env") });
 
+const rawStoreUrl = (process.env.SHOPIFY_STORE_URL || "").trim();
+const rawAdminToken = (process.env.SHOPIFY_ADMIN_TOKEN || "").trim();
+
+if (!rawStoreUrl || !rawAdminToken) {
+  throw new Error(
+    "Missing Shopify credentials. Set SHOPIFY_STORE_URL and SHOPIFY_ADMIN_TOKEN in data/.env via Settings → Shopify."
+  );
+}
+
 const shopify = new Shopify({
-  shopName: process.env.SHOPIFY_STORE_URL.replace(/^https?:\/\//, "").replace(/\/$/, ""),
-  accessToken: process.env.SHOPIFY_ADMIN_TOKEN,
+  shopName: rawStoreUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""),
+  accessToken: rawAdminToken,
   apiVersion: "2024-04",
 });
 
@@ -95,17 +104,6 @@ export default async function createDraftAndPublishToPos(card, config) {
         { namespace: "pricecharting", key: "condition", value: condition, type: "single_line_text_field" },
       ],
     });
-
-    // Adjust inventory for new product
-    const newInventoryItemId = newProduct.variants?.[0]?.inventory_item_id?.replace(/\D/g, "");
-    if (newInventoryItemId && quantity && locationId) {
-      try {
-        const invRes = await adjustInventory(newInventoryItemId, quantity);
-        console.log("Inventory adjusted for new product:", invRes);
-      } catch (err) {
-        console.error("Inventory adjustment failed for new product:", err.response?.data || err.message);
-      }
-    }
 
     console.log(`Draft created: ${newProduct.title}`);
     return newProduct;

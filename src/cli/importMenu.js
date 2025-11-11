@@ -138,25 +138,41 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
 
   // Scrape PriceCharting if product not found
   const scraped = await scrapeCard(url);
-  let basePrice = scraped.price;
-  let applyFormula = true;
+  const priceTable = scraped.prices || {};
+  const userCurrency = (config?.currency || "USD").toUpperCase();
+  const hasDedicatedPrice = Object.prototype.hasOwnProperty.call(priceTable, condition);
 
-  if (basePrice == null || isNaN(basePrice)) {
+  let basePrice = null;
+  if (condition === "Damaged") {
+    basePrice = priceTable.Ungraded ?? scraped.price ?? null;
+  } else if (hasDedicatedPrice) {
+    basePrice = priceTable[condition];
+  } else {
+    basePrice = scraped.price;
+  }
+
+  const needsManual =
+    basePrice == null ||
+    Number.isNaN(basePrice) ||
+    (hasDedicatedPrice && (priceTable[condition] == null || Number.isNaN(priceTable[condition])));
+
+  let manualOverride = false;
+  if (needsManual) {
     const { manualPrice } = await inquirer.prompt([
       {
         type: "input",
         name: "manualPrice",
-        message: `No price found for ${scraped.name} (${condition}). Enter manual price:`,
+        message: `No price found for ${scraped.name} (${condition}). Enter manual ${userCurrency} price:`,
         validate: (input) => (!isNaN(parseFloat(input)) && parseFloat(input) >= 0) || "Enter a valid non-negative number",
       },
     ]);
     basePrice = parseFloat(manualPrice);
-    applyFormula = false;
+    manualOverride = true;
   }
 
-  const finalPrice = applyFormula
-    ? (await calculateFinalPrice(basePrice, config, condition)).final
-    : basePrice;
+  const finalPrice = manualOverride
+    ? Number(Number(basePrice).toFixed(2))
+    : (await calculateFinalPrice(basePrice, config, condition)).final;
 
   console.log(`Uploading ${scraped.name} (${quantity}x, ${condition}) — ${config.currency || "GBP"} ${finalPrice.toFixed(2)}`);
 
