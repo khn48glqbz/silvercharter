@@ -4,7 +4,7 @@ node_modules/
 # Environment variables
 data/.env
 
-# Settings
+# Dynamic data
 data/settings.json
 data/currency.json
 
@@ -27,4 +27,3 @@ Thumbs.db
 # Personal notes
 data/tree.txt
 data/unicode.txt
-data/currency.json
