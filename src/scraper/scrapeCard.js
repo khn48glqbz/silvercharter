@@ -151,16 +151,33 @@ export default async function scrapeCard(urlInput) {
 
       let setLabel = "";
       let metadata = null;
-      const setAnchor = $("a:has(img.set-logo)").first();
-      if (setAnchor.length) {
-        setLabel = setAnchor.clone().children().remove().end().text().trim();
-        metadata = deriveSetMetadata(setLabel);
-        // TODO: Revisit setAnchor.find("img.set-logo").attr("src") for expansion icon scraping.
-      } else {
-        const fallbackSet = $('a[href*="/console/"]').first().text();
-        setLabel = fallbackSet.trim();
-        metadata = deriveSetMetadata(setLabel);
+
+      const productSetLink = $("#product_name a").first();
+      if (productSetLink.length) {
+        setLabel = productSetLink.clone().children().remove().end().text().trim();
       }
+
+      if (!setLabel) {
+        const breadcrumbSet = $(".breadcrumbs .crumbs a").last();
+        if (breadcrumbSet.length) {
+          setLabel = breadcrumbSet.clone().children().remove().end().text().trim();
+        }
+      }
+
+      if (!setLabel) {
+        const logoAnchor = $("a:has(img.set-logo)").first();
+        if (logoAnchor.length) {
+          setLabel = logoAnchor.clone().children().remove().end().text().trim();
+          // TODO: Revisit logoAnchor.find("img.set-logo").attr("src") for expansion icon scraping.
+        }
+      }
+
+      if (!setLabel) {
+        const fallbackSet = $('#product_details a[href*="/console/"]').first().text();
+        setLabel = fallbackSet.trim();
+      }
+
+      metadata = deriveSetMetadata(setLabel);
 
       const legacyPrice = prices.Ungraded ?? null;
 
