@@ -32,12 +32,15 @@ const shopify = new Shopify({
  * Includes debug logging for inventory updates.
  */
 export default async function createDraftAndPublishToPos(card, config) {
-  let { title, price, quantity, sourceUrl, condition, barcode, vendor, game, expansion, language } = card;
+  let { title, price, quantity, sourceUrl, condition, barcode, vendor, game, expansion, language, collection } = card;
 
   // If no barcode is provided, generate one
   if (!barcode) {
     barcode = generateEAN13(title, condition);
   }
+  const handle = String(barcode).trim();
+  const resolvedVendor = vendor || game || "Unknown Vendor";
+  const productTypeValue = "Trading Card";
 
   try {
     const existing = await findProductBySourceUrlAndCondition(sourceUrl, condition);
@@ -68,20 +71,24 @@ export default async function createDraftAndPublishToPos(card, config) {
         console.warn(`No inventoryItemId found for ${title}. Inventory not updated.`);
       }
 
-      // Update variant price + barcode if we have a variant
-      if (existing.variantId) {
-        try {
-          const updateRes = await shopify.product.update(existing.id, {
-            variants: [{ id: existing.variantId, price, barcode }],
-          });
-          console.log("Variant update response:", updateRes);
-        } catch (err) {
-          console.error("Variant update failed:", err.response?.body || err.message, err.response?.status);
+      // Update product fields (and variant if available)
+      try {
+        const updatePayload = {
+          vendor: resolvedVendor,
+          product_type: productTypeValue,
+          handle,
+        };
+        if (existing.variantId) {
+          updatePayload.variants = [{ id: existing.variantId, price, barcode }];
         }
+        const updateRes = await shopify.product.update(existing.id, updatePayload);
+        console.log("Product update response:", updateRes);
+      } catch (err) {
+        console.error("Product update failed:", err.response?.body || err.message, err.response?.status);
       }
 
       // Ensure metafields
-      await setProductMetafields(existing.id, { sourceUrl, condition, game, expansion, language });
+      await setProductMetafields(existing.id, { sourceUrl, condition, game, expansion, language, type: collection });
 
       return { ...existing, barcode };
     }
@@ -91,7 +98,9 @@ export default async function createDraftAndPublishToPos(card, config) {
     const newProduct = await shopify.product.create({
       title,
       status: "draft",
-      vendor: vendor || game || "Unknown Vendor",
+      vendor: resolvedVendor,
+      product_type: productTypeValue,
+      handle,
       variants: [
         {
           price,
@@ -106,7 +115,7 @@ export default async function createDraftAndPublishToPos(card, config) {
       ],
     });
 
-    await setProductMetafields(newProduct.id, { sourceUrl, condition, game, expansion, language });
+    await setProductMetafields(newProduct.id, { sourceUrl, condition, game, expansion, language, type: collection });
 
     console.log(`Draft created: ${newProduct.title}`);
     return newProduct;

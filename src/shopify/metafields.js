@@ -13,6 +13,7 @@ export async function setProductMetafields(productId, fields = {}) {
     const game = (fields.game || "").trim();
     const expansion = (fields.expansion || "").trim();
     const language = (fields.language || "").trim();
+    const type = (fields.type || "").trim();
     const ownerId = `gid://shopify/Product/${productId}`;
 
     const metafields = [];
@@ -63,6 +64,16 @@ export async function setProductMetafields(productId, fields = {}) {
         key: "language",
         type: "single_line_text_field",
         value: language,
+        ownerId,
+      });
+    }
+
+    if (type) {
+      metafields.push({
+        namespace: "pricecharting",
+        key: "type",
+        type: "single_line_text_field",
+        value: type,
         ownerId,
       });
     }
@@ -122,7 +133,7 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
                     }
                   }
                 }
-                metafields(first: 10, namespace: "pricecharting") {
+                metafields(first: 15, namespace: "pricecharting") {
                   edges { node { key value } }
                 }
               }
@@ -157,6 +168,7 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
       game: metafields.game || "",
       expansion: metafields.expansion || "",
       language: metafields.language || "",
+      type: metafields.type || "",
     };
   } catch (err) {
     console.warn("Failed to query product by source_url & condition:", err.message || err);

@@ -106,6 +106,8 @@ Type "exit" to quit
 
 export async function handleImportUrl(url, quantity, condition, formula, config, csvPath) {
   let existingProduct = null;
+  const singlesConditions = new Set(["Ungraded", "Damaged"]);
+  const collectionType = singlesConditions.has(condition) ? "Singles" : "Slabs";
 
   try {
     existingProduct = await findProductBySourceUrlAndCondition(url, condition);
@@ -128,6 +130,7 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
           game: existingProduct.game,
           expansion: existingProduct.expansion,
           language: existingProduct.language,
+          collection: collectionType,
         },
         config
       );
@@ -145,7 +148,7 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
       csvGame,
       csvExpansion,
       csvLanguage,
-      "Singles",
+      collectionType,
       condition,
       existingProduct.price.toFixed(2),
       quantity
@@ -211,6 +214,7 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
       game,
       expansion,
       language: languageCode,
+      collection: collectionType,
     },
     config
   );
@@ -222,7 +226,7 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
     game,
     expansion,
     languageCode,
-    "Singles",
+    collectionType,
     condition,
     finalPrice.toFixed(2),
     quantity
