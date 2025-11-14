@@ -15,7 +15,7 @@ dotenv.config({ path: path.join(process.cwd(), "data", ".env") });
 await initCurrencyCache();
 
 // Start CLI
-import mainMenu from "./src/cli/mainMenu.js";
+import mainMenu from "./src/cli/menus/mainMenu.js";
 
 mainMenu().catch((err) => {
   console.error("Fatal error:", err && err.message ? err.message : err);

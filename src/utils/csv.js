@@ -8,31 +8,44 @@ function ensureLabelsDir() {
   if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR, { recursive: true });
 }
 
-export function createSessionCSVWithId(sessionId) {
+const SESSION_HEADERS = {
+  import: "Variant Barcode,Title,Game,Expansion,Language,Type,Condition,Variant Price\n",
+  repricing: "Variant Barcode,Title,Game,Expansion,Language,Type,Condition,Variant Price\n",
+  default: "Variant Barcode,Title,Game,Expansion,Language,Type,Condition,Variant Price\n",
+};
+
+export function createSessionCSVWithId(sessionId, type = "import") {
   ensureLabelsDir();
-  const filePath = path.join(LABELS_DIR, `session_${sessionId}.csv`);
+  const prefix = type ? `${type}_session` : "session";
+  const filePath = path.join(LABELS_DIR, `${prefix}_${sessionId}.csv`);
   if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(
-      filePath,
-      "Variant Barcode,Title,Game,Expansion,Language,Type,Condition,Variant Price\n",
-      "utf8"
-    );
+    const header = SESSION_HEADERS[type] || SESSION_HEADERS.default;
+    fs.writeFileSync(filePath, header, "utf8");
   }
   return filePath;
 }
 
+export function listSessionFiles(type = "import") {
+  ensureLabelsDir();
+  const prefixes = type === "import" ? [`${type}_session_`, "session_"] : [`${type}_session_`];
+  return fs
+    .readdirSync(LABELS_DIR)
+    .filter((file) => file.endsWith(".csv") && prefixes.some((prefix) => file.startsWith(prefix)))
+    .map((file) => ({ name: file, path: path.join(LABELS_DIR, file) }));
+}
+
 /**
  * Append rows in the CSV format
- * @param {*} filePath 
+ * @param {*} filePath
  * @param {*} barcode
- * @param {*} title 
+ * @param {*} title
  * @param {*} game
  * @param {*} expansion
  * @param {*} language
- * @param {*} type 
- * @param {*} condition 
- * @param {*} priceStr 
- * @param {*} quantity 
+ * @param {*} type
+ * @param {*} condition
+ * @param {*} priceStr
+ * @param {*} quantity
  */
 export function appendCsvRows(
   filePath,

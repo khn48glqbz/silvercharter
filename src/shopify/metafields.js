@@ -23,6 +23,7 @@ export async function setProductMetafields(productId, fields = {}) {
     const language = (fields.language || "").trim();
     const type = (fields.type || "").trim();
     const expansionIconId = (fields.expansionIconId || "").trim();
+    const rawValue = fields.value;
     const ownerId = normalizeOwnerId(productId);
 
     const metafields = [];
@@ -95,6 +96,25 @@ export async function setProductMetafields(productId, fields = {}) {
         value: expansionIconId,
         ownerId,
       });
+    }
+
+    if (rawValue !== undefined && rawValue !== null) {
+      let valueStr = null;
+      if (rawValue === "-") {
+        valueStr = "-";
+      } else {
+        const num = Number(rawValue);
+        if (!Number.isNaN(num)) valueStr = num.toFixed(2);
+      }
+      if (valueStr) {
+        metafields.push({
+          namespace: "pricecharting",
+          key: "value",
+          type: "single_line_text_field",
+          value: valueStr,
+          ownerId,
+        });
+      }
     }
 
     const gql = {
@@ -216,6 +236,7 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
       language: metafields.language?.value || "",
       type: metafields.type?.value || "",
       expansionIcon: metafields.expansion_icon?.reference?.id || "",
+      value: metafields.value?.value ?? null,
     };
   } catch (err) {
     console.warn("Failed to query product by source_url & condition:", err.message || err);

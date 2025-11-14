@@ -1,7 +1,7 @@
 import inquirer from "inquirer";
-import shopifySettings from "./shopifySettings.js";
-import pricingSettings from "./pricingSettings.js";
-import { restoreDefaults } from "../utils/config.js";
+import shopifySettings from "../shopifySettings.js";
+import pricingSettings from "../pricingSettings.js";
+import { restoreDefaults } from "../../utils/config.js";
 
 export default async function settingsMenu(config) {
   while (true) {

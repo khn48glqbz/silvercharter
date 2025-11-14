@@ -45,6 +45,7 @@ export default async function createDraftAndPublishToPos(card, config) {
     language,
     collection,
     expansionIconId,
+    value,
   } = card;
 
   // If no barcode is provided, generate one
@@ -109,6 +110,7 @@ export default async function createDraftAndPublishToPos(card, config) {
         language,
         type: collection,
         expansionIconId,
+        value,
       });
 
       return { ...existing, barcode };
@@ -144,6 +146,7 @@ export default async function createDraftAndPublishToPos(card, config) {
       language,
       type: collection,
       expansionIconId,
+      value,
     });
 
     console.log(`Draft created: ${newProduct.title}`);

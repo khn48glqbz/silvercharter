@@ -1,6 +1,6 @@
 // TEMP MODULE: removes legacy tags from products with PriceCharting source URLs.
 import inquirer from "inquirer";
-import { graphqlPost } from "../shopify/graphql.js";
+import { graphqlPost } from "../../shopify/graphql.js";
 
 const TAG_QUERY = `
   query ($cursor: String) {

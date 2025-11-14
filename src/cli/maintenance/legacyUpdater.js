@@ -1,9 +1,10 @@
 // TEMP MODULE: remove after legacy metadata refresh is complete.
 import inquirer from "inquirer";
-import scrapeCard from "../scraper/scrapeCard.js";
-import { graphqlPost } from "../shopify/graphql.js";
-import { setProductMetafields } from "../shopify/metafields.js";
-import { ensureExpansionIconFile } from "../shopify/files.js";
+import scrapeCard from "../../scraper/scrapeCard.js";
+import { graphqlPost } from "../../shopify/graphql.js";
+import { setProductMetafields } from "../../shopify/metafields.js";
+import { ensureExpansionIconFile } from "../../shopify/files.js";
+import { convertUSD } from "../../utils/currency.js";
 
 const PRODUCTS_QUERY = `
   query ($cursor: String) {
@@ -96,7 +97,7 @@ async function updateProductCoreFields(input) {
   return res?.data?.productUpdate?.product;
 }
 
-export default async function runLegacyUpdater() {
+export default async function runLegacyUpdater(config) {
   const { confirmRun } = await inquirer.prompt([
     {
       type: "confirm",
@@ -111,6 +112,8 @@ export default async function runLegacyUpdater() {
     console.log("Legacy updater cancelled.");
     return;
   }
+
+  const targetCurrency = (config?.currency || "USD").toUpperCase();
 
   let processed = 0;
   let updatedProducts = 0;
@@ -186,6 +189,16 @@ export default async function runLegacyUpdater() {
       if (ensured?.id) expansionIconId = ensured.id;
     }
 
+    let originalValue = metafields.value ? parseFloat(metafields.value.value || "0") : null;
+    if (typeof scraped.price === "number" && !Number.isNaN(scraped.price)) {
+      try {
+        const converted = await convertUSD(scraped.price, targetCurrency);
+        originalValue = Number(Number(converted).toFixed(2));
+      } catch (err) {
+        console.warn(`Failed to convert base price for ${node.title}:`, err.message || err);
+      }
+    }
+
     try {
       await setProductMetafields(node.id, {
         sourceUrl,
@@ -195,6 +208,7 @@ export default async function runLegacyUpdater() {
         language: languageCode,
         type: typeValue,
         expansionIconId,
+        value: originalValue,
       });
       updatedMetafields += 1;
       console.log(`Refreshed metadata for ${node.title} (${condition})`);

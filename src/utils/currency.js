@@ -6,6 +6,30 @@ import axios from "axios";
 const DATA_DIR = path.join(process.cwd(), "data");
 const CACHE_PATH = path.join(DATA_DIR, "currency.json");
 const FRANKFURTER_URL = "https://api.frankfurter.app/latest?from=USD";
+const SYMBOL_MAP = {
+  USD: "$",
+  GBP: "£",
+  EUR: "€",
+  JPY: "¥",
+  CNY: "¥",
+  AUD: "A$",
+  CAD: "C$",
+  CHF: "CHF ",
+  SEK: "kr",
+  NOK: "kr",
+  DKK: "kr",
+  NZD: "NZ$",
+  INR: "₹",
+  KRW: "₩",
+  TRY: "₺",
+  RUB: "₽",
+  BRL: "R$",
+  MXN: "MX$",
+  HKD: "HK$",
+  SGD: "S$",
+  ZAR: "R",
+  THB: "฿",
+};
 
 /**
  * initCurrencyCache()
@@ -62,4 +86,9 @@ export async function convertUSD(value, targetCurrency = "USD") {
     console.warn("Failed to read currency cache; returning original USD value.");
     return value;
   }
+}
+
+export function formatCurrency(value, currency = "USD") {
+  const symbol = SYMBOL_MAP[currency.toUpperCase()] || `${currency} `;
+  return `${symbol}${Number(value).toFixed(2)}`;
 }
