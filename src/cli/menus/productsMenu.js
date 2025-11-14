@@ -18,7 +18,7 @@ export default async function productsMenu(config) {
     ]);
 
     if (choice === "View Products") {
-      await viewProducts();
+      await viewProducts(config);
     } else if (choice === "Start Repricing Session") {
       const sessionId = getAndIncrementSessionId();
       const csvPath = createSessionCSVWithId(sessionId, "repricing");

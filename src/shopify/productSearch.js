@@ -41,7 +41,7 @@ function mapMetafields(edges = []) {
   return Object.fromEntries((edges || []).map((edge) => [edge.node.key, edge.node.value]));
 }
 
-export async function fetchAllPricechartingProducts() {
+export async function fetchAllPricechartingProducts(progressCb) {
   const results = [];
   let cursor = null;
   while (true) {
@@ -76,6 +76,9 @@ export async function fetchAllPricechartingProducts() {
         inventoryItemId: variant.inventoryItem?.id || "",
       });
       cursor = edge.cursor;
+      if (typeof progressCb === "function") {
+        progressCb(results.length);
+      }
     }
     const pageInfo = res?.data?.products?.pageInfo;
     if (!pageInfo?.hasNextPage) break;

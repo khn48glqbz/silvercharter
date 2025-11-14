@@ -66,7 +66,16 @@ async function findFileByFilename(filename) {
 }
 
 async function downloadIconBuffer(url) {
-  const res = await axios.get(url, { responseType: "arraybuffer" });
+  const res = await axios.get(url, {
+    responseType: "arraybuffer",
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:110.0) Gecko/20100101 Firefox/110.0",
+      Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      Referer: "https://www.pricecharting.com/",
+    },
+  });
   return Buffer.from(res.data);
 }
 
@@ -99,7 +108,7 @@ async function stagedUpload(filename, buffer, mimeType) {
       mimeType,
       resource: "IMAGE",
       httpMethod: "POST",
-      fileSize: buffer.length,
+      fileSize: String(buffer.length),
     },
   ];
   const res = await graphqlPost({ query: STAGED_UPLOAD_MUTATION, variables: { input } });

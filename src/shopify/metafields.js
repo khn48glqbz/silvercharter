@@ -110,7 +110,7 @@ export async function setProductMetafields(productId, fields = {}) {
         metafields.push({
           namespace: "pricecharting",
           key: "value",
-          type: "single_line_text_field",
+          type: valueStr === "-" ? "single_line_text_field" : "number_decimal",
           value: valueStr,
           ownerId,
         });
