@@ -151,10 +151,22 @@ export default async function scrapeCard(urlInput) {
 
       let setLabel = "";
       let metadata = null;
+      let iconData = null;
 
       const productSetLink = $("#product_name a").first();
       if (productSetLink.length) {
-        setLabel = productSetLink.clone().children().remove().end().text().trim();
+        const linkClone = productSetLink.clone();
+        const img = linkClone.find("img.set-logo").first();
+        if (img.length) {
+          const src = img.attr("src") || "";
+          const filename = (src.split("/").pop() || "").trim();
+          if (filename) {
+            const absoluteUrl = /^https?:\/\//i.test(src) ? src : `https://www.pricecharting.com${src}`;
+            iconData = { filename, src, url: absoluteUrl };
+          }
+        }
+        linkClone.children("img").remove();
+        setLabel = linkClone.text().trim();
       }
 
       if (!setLabel) {
@@ -167,8 +179,16 @@ export default async function scrapeCard(urlInput) {
       if (!setLabel) {
         const logoAnchor = $("a:has(img.set-logo)").first();
         if (logoAnchor.length) {
+          const img = logoAnchor.find("img.set-logo").first();
+          if (img.length) {
+            const src = img.attr("src") || "";
+            const filename = (src.split("/").pop() || "").trim();
+            if (filename) {
+              const absoluteUrl = /^https?:\/\//i.test(src) ? src : `https://www.pricecharting.com${src}`;
+              iconData = { filename, src, url: absoluteUrl };
+            }
+          }
           setLabel = logoAnchor.clone().children().remove().end().text().trim();
-          // TODO: Revisit logoAnchor.find("img.set-logo").attr("src") for expansion icon scraping.
         }
       }
 
@@ -178,6 +198,7 @@ export default async function scrapeCard(urlInput) {
       }
 
       metadata = deriveSetMetadata(setLabel);
+      metadata.icon = iconData;
 
       const legacyPrice = prices.Ungraded ?? null;
 
@@ -199,13 +220,14 @@ export default async function scrapeCard(urlInput) {
     name: "Unknown Card",
     price: null,
     prices: {},
-    metadata: {
-      setLabel: "",
-      game: "Unknown Game",
-      vendor: "Unknown Vendor",
-      languageName: "English",
-      languageCode: "EN",
-      expansion: "Unknown Expansion",
-    },
+      metadata: {
+        setLabel: "",
+        game: "Unknown Game",
+        vendor: "Unknown Vendor",
+        languageName: "English",
+        languageCode: "EN",
+        expansion: "Unknown Expansion",
+        icon: null,
+      },
   };
 }

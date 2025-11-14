@@ -5,16 +5,21 @@ import createDraftAndPublishToPos from "../shopify/draft.js";
 import { appendCsvRows } from "../utils/csv.js";
 import { findProductBySourceUrlAndCondition } from "../shopify/metafields.js";
 import scrapeCard from "../scraper/scrapeCard.js";
+import runLegacyUpdater from "./legacyUpdater.js";
+import runLegacyTagCleaner from "./legacyTagCleaner.js";
+import { parseSwitchInput } from "./switchParser.js";
+import { ensureExpansionIconFile } from "../shopify/files.js";
 
 export default async function importMenu(config, csvPath) {
+  let switchDefaults = { condition: "Ungraded", quantity: 1 };
   while (true) {
     const { importChoice } = await inquirer.prompt([
       {
         type: "list",
         name: "importChoice",
-        message: "Import Cards",
+        message: "Imports",
         prefix: "⛏",
-        choices: ["Start Import", "View Syntax", "Return"],
+        choices: ["Start Import", "Update Legacy Cards", "Remove Legacy Tags", "View Syntax", "Return"],
       },
     ]);
 
@@ -43,57 +48,72 @@ export default async function importMenu(config, csvPath) {
         }
 
         // Ask for condition/quantity switches
+        const defaultLabel = `${switchDefaults.condition} x${switchDefaults.quantity}`;
         const { switches } = await inquirer.prompt([
           {
             name: "switches",
-            message: 'Enter additional switches (e.g. "U*2", "G9.5*3", "D*1") — leave blank for default (U*1):',
-            default: "U*1",
+            message: `Switches (current default: ${defaultLabel}). Use "-g/-G" for grade, "-q/-Q" for quantity, "-n" to queue another card:`,
+            default: "",
           },
         ]);
 
-        // Parse switch
-        const switchMatch = switches.match(/^([A-Za-z0-9.]+)\*(\d+)$/);
-        let conditionCode = "U";
-        let quantity = 1;
-
-        if (switchMatch) {
-          conditionCode = switchMatch[1];
-          quantity = parseInt(switchMatch[2], 10) || 1;
+        let parsed;
+        try {
+          parsed = parseSwitchInput(switches, switchDefaults);
+        } catch (err) {
+          console.error(err.message);
+          continue;
         }
 
-        // Map condition codes to config formula keys
-        const conditionMap = {
-          U: "Ungraded",
-          D: "Damaged",
-          G7: "Grade 7",
-          G8: "Grade 8",
-          G9: "Grade 9",
-          "G9.5": "Grade 9.5",
-          G10: "Grade 10",
-        };
+        switchDefaults = parsed.defaults;
 
-        const condition = conditionMap[conditionCode] || conditionCode;
-        const formula = getFormulaForCondition(condition, config);
+        console.log("Pending imports:");
+        parsed.entries.forEach((entry, idx) => {
+          console.log(`  ${idx + 1}. ${entry.condition} x${entry.quantity}`);
+        });
+
+        const { confirmRun } = await inquirer.prompt([
+          {
+            type: "confirm",
+            name: "confirmRun",
+            message: "Proceed with these imports?",
+            default: true,
+          },
+        ]);
+
+        if (!confirmRun) {
+          console.log("Import cancelled.");
+          continue;
+        }
 
         try {
-          if (!/^https?:\/\//i.test(url)) {
-            console.error("Invalid URL format. Please enter a full http/https link.");
-            continue;
+          for (const entry of parsed.entries) {
+            if (!/^https?:\/\//i.test(url)) {
+              console.error("Invalid URL format. Please enter a full http/https link.");
+              break;
+            }
+            const formula = getFormulaForCondition(entry.condition, config);
+            await handleImportUrl(url, entry.quantity, entry.condition, formula, config, csvPath);
           }
-          await handleImportUrl(url, quantity, condition, formula, config, csvPath);
         } catch (err) {
           console.error("Error importing card:", err.message || err);
         }
       }
 
+    } else if (importChoice === "Update Legacy Cards") {
+      await runLegacyUpdater(config);
+    } else if (importChoice === "Remove Legacy Tags") {
+      await runLegacyTagCleaner();
     } else if (importChoice === "View Syntax") {
       console.log(`
 Syntax Guide:
-  URL only: imports a single ungraded card
-  URL + switches:
-    U*5   → 5 ungraded cards
-    D*3   → 3 damaged cards
-    G9.5*2 → 2 graded 9.5 cards
+  URL only + blank switches: uses current defaults (initially Ungraded x1)
+  Switch Flags:
+    -g9      → use Grade 9 for this import
+    -q3      → quantity 3 for this import
+    -G10     → set Grade 10 as the new default grade (uppercase = persistent)
+    -Q2      → set quantity 2 as the new default quantity
+    -n       → commit the current card and start defining another (batch in one line)
 
 Type "return" to go back
 Type "exit" to quit
@@ -131,6 +151,7 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
           expansion: existingProduct.expansion,
           language: existingProduct.language,
           collection: collectionType,
+          expansionIconId: existingProduct.expansionIcon,
         },
         config
       );
@@ -164,6 +185,7 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
   const expansion = metadata.expansion || "Unknown Expansion";
   const languageCode = metadata.languageCode || "EN";
   const vendor = metadata.vendor || game;
+  const expansionIconInfo = metadata.icon ? await ensureExpansionIconFile(metadata.icon) : null;
   const priceTable = scraped.prices || {};
   const userCurrency = (config?.currency || "USD").toUpperCase();
   const hasDedicatedPrice = Object.prototype.hasOwnProperty.call(priceTable, condition);
@@ -215,6 +237,7 @@ export async function handleImportUrl(url, quantity, condition, formula, config,
       expansion,
       language: languageCode,
       collection: collectionType,
+      expansionIconId: expansionIconInfo?.id || null,
     },
     config
   );

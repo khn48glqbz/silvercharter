@@ -1,6 +1,14 @@
 // src/shopify/metafields.js
 import { graphqlPost } from "./graphql.js";
 
+function normalizeOwnerId(productId) {
+  const raw = String(productId || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("gid://")) return raw;
+  const numeric = raw.replace(/\D/g, "") || raw;
+  return `gid://shopify/Product/${numeric}`;
+}
+
 /**
  * Set both source_url and condition metafields on a product.
  * productId: numeric or GID suffix
@@ -14,7 +22,8 @@ export async function setProductMetafields(productId, fields = {}) {
     const expansion = (fields.expansion || "").trim();
     const language = (fields.language || "").trim();
     const type = (fields.type || "").trim();
-    const ownerId = `gid://shopify/Product/${productId}`;
+    const expansionIconId = (fields.expansionIconId || "").trim();
+    const ownerId = normalizeOwnerId(productId);
 
     const metafields = [];
 
@@ -78,6 +87,16 @@ export async function setProductMetafields(productId, fields = {}) {
       });
     }
 
+    if (expansionIconId) {
+      metafields.push({
+        namespace: "pricecharting",
+        key: "expansion_icon",
+        type: "file_reference",
+        value: expansionIconId,
+        ownerId,
+      });
+    }
+
     const gql = {
       query: `
         mutation setMetafields($metafields: [MetafieldsSetInput!]!) {
@@ -89,6 +108,11 @@ export async function setProductMetafields(productId, fields = {}) {
       `,
       variables: { metafields },
     };
+
+    if (!metafields.length) {
+      console.log(`No metafield changes for product ${productId}`);
+      return null;
+    }
 
     const res = await graphqlPost(gql);
     const errors = res?.data?.metafieldsSet?.userErrors;
@@ -134,7 +158,23 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
                   }
                 }
                 metafields(first: 15, namespace: "pricecharting") {
-                  edges { node { key value } }
+                  edges {
+                    node {
+                      key
+                      value
+                      type
+                      reference {
+                        ... on MediaImage {
+                          id
+                          image { url }
+                        }
+                        ... on GenericFile {
+                          id
+                          url
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -151,9 +191,15 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
     const node = edge.node;
     const variantNode = node.variants?.edges?.[0]?.node;
 
-    const metafields = Object.fromEntries(
-      (node.metafields?.edges || []).map((e) => [e.node.key, e.node.value])
-    );
+    const metafields = {};
+    for (const edge of node.metafields?.edges || []) {
+      const key = edge.node.key;
+      metafields[key] = {
+        value: edge.node.value,
+        type: edge.node.type,
+        reference: edge.node.reference || null,
+      };
+    }
 
     return {
       id: node.id,
@@ -163,12 +209,13 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
       inventoryItemId: variantNode?.inventoryItem?.id,
       price: parseFloat(variantNode?.price || 0),
       barcode: variantNode?.barcode || "",
-      sourceUrl: metafields.source_url || "",
-      condition: metafields.condition || "",
-      game: metafields.game || "",
-      expansion: metafields.expansion || "",
-      language: metafields.language || "",
-      type: metafields.type || "",
+      sourceUrl: metafields.source_url?.value || "",
+      condition: metafields.condition?.value || "",
+      game: metafields.game?.value || "",
+      expansion: metafields.expansion?.value || "",
+      language: metafields.language?.value || "",
+      type: metafields.type?.value || "",
+      expansionIcon: metafields.expansion_icon?.reference?.id || "",
     };
   } catch (err) {
     console.warn("Failed to query product by source_url & condition:", err.message || err);

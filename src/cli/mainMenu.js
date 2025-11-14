@@ -19,16 +19,11 @@ export default async function mainMenu() {
         name: "choice",
         message: "Main Menu",
         prefix: "⛏",
-        choices: [
-          "Import Cards",
-          "Labels",
-          "Settings",
-          "Exit",
-        ],
+        choices: ["Imports", "Labels", "Settings", "Exit"],
       },
     ]);
 
-    if (choice === "Import Cards") {
+    if (choice === "Imports") {
       await importMenu(config, csvPath);
     } else if (choice === "Labels") {
       await labelsMenu(csvPath);
