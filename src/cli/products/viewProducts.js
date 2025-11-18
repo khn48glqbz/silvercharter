@@ -100,10 +100,15 @@ function applyFilters(products, filters) {
 function formatProductLine(prod, currency) {
   const qty = prod.inventoryQuantity == null ? "?" : prod.inventoryQuantity;
   const retail = prod.price ? formatCurrency(prod.price, currency) : formatCurrency(0, currency);
-  const original = prod.pricechartingValue && prod.pricechartingValue !== "-"
-    ? formatCurrency(prod.pricechartingValue, currency)
-    : "-";
+  const original = formatOriginalValue(prod.pricechartingValue, currency);
   return `${prod.title} [${prod.condition || "Unknown"} | ${prod.type || "?"}] — ${retail} (${original}) | Qty: ${qty} | Set: ${prod.expansion || "Unknown"}`;
+}
+
+function formatOriginalValue(value, currency) {
+  if (!value || value === "N/A") return "N/A";
+  const num = Number(value);
+  if (Number.isNaN(num)) return value;
+  return formatCurrency(num, currency);
 }
 
 async function showPageMenu(products, filters, page, currency) {

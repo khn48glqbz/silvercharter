@@ -3,10 +3,17 @@ import inquirer from "inquirer";
 import labelsMenu from "../menus/labelsMenu.js";
 import { parseSwitchInput } from "../helpers/switchParser.js";
 import { handleImportUrl } from "../../workflows/importCard.js";
+import handleCustomCard from "../menus/customCard.js";
 
 export default async function runImportSession(config, csvPath) {
   console.log(`Using import session file: ${path.basename(csvPath)}`);
-  let switchDefaults = { condition: "Ungraded", quantity: 1 };
+  let switchDefaults = {
+    condition: "Ungraded",
+    quantity: 1,
+    language: null,
+    applyFormula: true,
+    formulaOverride: null,
+  };
 
   while (true) {
     const { urlInput } = await inquirer.prompt([
@@ -21,6 +28,10 @@ export default async function runImportSession(config, csvPath) {
       await labelsMenu(csvPath);
       continue;
     }
+    if (lower === "custom") {
+      await handleCustomCard(config, csvPath);
+      continue;
+    }
     if (lower === "exit") {
       console.log("Session finished. CSV saved to:", csvPath);
       process.exit(0);
@@ -33,11 +44,19 @@ export default async function runImportSession(config, csvPath) {
       continue;
     }
 
-    const defaultLabel = `${switchDefaults.condition} x${switchDefaults.quantity}`;
+    const defaultParts = [
+      `${switchDefaults.condition}`,
+      `x${switchDefaults.quantity}`,
+      switchDefaults.language ? `lang:${switchDefaults.language}` : null,
+      switchDefaults.formulaOverride ? `f:${switchDefaults.formulaOverride}` : null,
+      switchDefaults.applyFormula === false ? "formula:off" : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
     const { switches } = await inquirer.prompt([
       {
         name: "switches",
-        message: `Switches (current default: ${defaultLabel}). Use "-g/-G" for grade, "-q/-Q" for quantity, "-n" to queue another card:`,
+        message: `Switches (current default: ${defaultParts || "none"}). Use "-c" for condition, "-q" for quantity, "-l" for language, "-f" for formula, "-n" to queue another card, "-d" to capture defaults.`,
         default: "",
       },
     ]);
@@ -54,7 +73,16 @@ export default async function runImportSession(config, csvPath) {
 
     console.log("Pending imports:");
     parsed.entries.forEach((entry, idx) => {
-      console.log(`  ${idx + 1}. ${entry.condition} x${entry.quantity}`);
+      const parts = [
+        entry.condition,
+        `x${entry.quantity}`,
+        entry.language ? `lang:${entry.language}` : null,
+        entry.formulaOverride ? `f:${entry.formulaOverride}` : null,
+        entry.applyFormula === false ? "formula:off" : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      console.log(`  ${idx + 1}. ${parts}`);
     });
 
     const { confirmRun } = await inquirer.prompt([
@@ -73,7 +101,11 @@ export default async function runImportSession(config, csvPath) {
 
     try {
       for (const entry of parsed.entries) {
-        await handleImportUrl(url, entry.quantity, entry.condition, config, csvPath);
+        await handleImportUrl(url, entry.quantity, entry.condition, config, csvPath, {
+          formulaOverride: entry.formulaOverride,
+          applyFormula: entry.applyFormula,
+          languageOverride: entry.language,
+        });
       }
     } catch (err) {
       console.error("Error importing card:", err.message || err);

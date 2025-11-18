@@ -1,13 +1,13 @@
 {
   "currency": "GBP",
   "formula": {
-    "Damaged": "*0.9",
-    "Ungraded": "*1.2",
-    "Grade 7": "*1.4",
-    "Grade 8": "*1.5",
-    "Grade 9": "*1.8",
-    "Grade 9.5": "*2",
-    "Grade 10": "*2.5",
+    "Damaged": "*0.8",
+    "Ungraded": "*1",
+    "Grade 7": "*1",
+    "Grade 8": "*1",
+    "Grade 9": "*1",
+    "Grade 9.5": "*1",
+    "Grade 10": "*1",
     "roundTo99": true
   },
   "sessionID": 0

@@ -84,7 +84,13 @@ export function getFormulaForCondition(condition, config) {
  *
  * Returns: { converted, formulaResult, final, roundTo99, usedFormula }
  */
-export async function calculateFinalPrice(amountUSD, config, selectedGrade = null) {
+export async function calculateFinalPrice(
+  amountUSD,
+  config,
+  selectedGrade = null,
+  overrideFormula = null,
+  applyFormula = true
+) {
   if (!config) throw new Error("Missing configuration object.");
   if (typeof amountUSD !== "number" || isNaN(amountUSD)) {
     throw new Error("Invalid base price provided.");
@@ -98,16 +104,20 @@ export async function calculateFinalPrice(amountUSD, config, selectedGrade = nul
 
   // Determine which formula string to use
   let formulaStr;
-  if (selectedGrade && typeof formulaTable[selectedGrade] === "string") {
+  if (overrideFormula) {
+    formulaStr = overrideFormula;
+  } else if (selectedGrade && typeof formulaTable[selectedGrade] === "string") {
     formulaStr = formulaTable[selectedGrade];
   } else if (typeof config.formula === "string") {
-    // legacy handling (unlikely with new canonical structure)
     formulaStr = config.formula;
   } else {
     formulaStr = formulaTable["Ungraded"] || "*1";
   }
 
-  const formulaResult = applyPricingFormula(Number(converted), formulaStr);
+  let formulaResult = Number(converted);
+  if (applyFormula && formulaStr) {
+    formulaResult = applyPricingFormula(Number(converted), formulaStr);
+  }
 
   // roundTo99 read from the formulaTable object (so it remains grouped with formulas)
   const shouldRound = !!formulaTable.roundTo99;

@@ -8,7 +8,12 @@ import { ensureExpansionIconFile } from "../shopify/files.js";
 
 const singlesConditions = new Set(["Ungraded", "Damaged"]);
 
-export async function handleImportUrl(url, quantity, condition, config, csvPath) {
+export async function handleImportUrl(url, quantity, condition, config, csvPath, options = {}) {
+  const {
+    formulaOverride = null,
+    applyFormula = true,
+    languageOverride = null,
+  } = options;
   let existingProduct = null;
   const collectionType = singlesConditions.has(condition) ? "Singles" : "Slabs";
 
@@ -66,7 +71,8 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath)
   const metadata = scraped.metadata || {};
   const game = metadata.game || "Unknown Game";
   const expansion = metadata.expansion || "Unknown Expansion";
-  const languageCode = metadata.languageCode || "EN";
+  let languageCode = metadata.languageCode || "EN";
+  if (languageOverride) languageCode = languageOverride;
   const vendor = metadata.vendor || game;
   const expansionIconInfo = metadata.icon ? await ensureExpansionIconFile(metadata.icon) : null;
   const priceTable = scraped.prices || {};
@@ -101,15 +107,19 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath)
     manualOverride = true;
   }
 
-  let originalValueDisplay = "-";
+  let originalValueDisplay = "N/A";
   let finalPrice = null;
 
-  if (manualOverride) {
+  let pricingResult = null;
+  if (manualOverride || !applyFormula) {
     finalPrice = Number(Number(basePrice).toFixed(2));
   } else {
-    const pricingResult = await calculateFinalPrice(basePrice, config, condition);
+    pricingResult = await calculateFinalPrice(basePrice, config, condition, formulaOverride, applyFormula);
     originalValueDisplay = Number(Number(pricingResult.converted).toFixed(2)).toFixed(2);
     finalPrice = pricingResult.final;
+  }
+  if (!pricingResult) {
+    originalValueDisplay = Number(Number(finalPrice).toFixed(2)).toFixed(2) || "null";
   }
 
   console.log(`Uploading ${scraped.name} (${quantity}x, ${condition}) — ${config.currency || "GBP"} ${finalPrice.toFixed(2)}`);

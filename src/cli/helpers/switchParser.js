@@ -1,98 +1,156 @@
-// Parses CLI switches like "-g9 -q2" (per entry) and "-G9 -Q2" (update defaults).
-const CONDITION_MAP = {
-  U: "Ungraded",
-  D: "Damaged",
-  G7: "Grade 7",
-  G8: "Grade 8",
-  G9: "Grade 9",
-  G95: "Grade 9.5",
-  G10: "Grade 10",
-};
+import { getLanguagesMap } from "../../utils/staticData.js";
 
-function normalizeCondition(raw = "") {
-  let key = raw.trim().toUpperCase();
-  if (!key) return null;
-  if (/^\d/.test(key)) {
-    key = `G${key}`;
-  }
-  if (key.startsWith("G") && key.includes(".")) {
-    key = key.replace(".", "");
-  }
-  return CONDITION_MAP[key] || null;
+const languages = getLanguagesMap();
+
+function tokenize(input = "") {
+  const matches = input.match(/"[^"]*"|\S+/g);
+  if (!matches) return [];
+  return matches.map((tok) => tok.replace(/^"|"$/g, ""));
 }
 
 function ensurePositiveInteger(value, label) {
   const num = parseInt(value, 10);
-  if (!Number.isFinite(num) || num <= 0) {
-    throw new Error(`${label} must be a positive integer.`);
-  }
+  if (!Number.isFinite(num) || num <= 0) throw new Error(`${label} must be a positive integer.`);
   return num;
 }
 
-export function parseSwitchInput(input, defaults) {
-  const trimmed = (input || "").trim();
-  const newDefaults = { ...defaults };
+function normalizeCondition(value = "") {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error("Condition flag requires a value.");
+  if (/^u(ngraded)?$/i.test(trimmed)) return "Ungraded";
+  if (/^d(amaged)?$/i.test(trimmed)) return "Damaged";
+  let grade = trimmed.toUpperCase();
+  if (grade.startsWith("G")) grade = grade.slice(1);
+  grade = grade.replace(/[^0-9.]/g, "");
+  if (!grade) throw new Error(`Invalid grade "${value}".`);
+  if (grade === "9.5") return "Grade 9.5";
+  return `Grade ${grade.replace(/\.0$/, "")}`;
+}
 
-  if (!trimmed) {
-    return { entries: [{ condition: defaults.condition, quantity: defaults.quantity }], defaults: newDefaults };
+function normalizeLanguage(value = "") {
+  const trimmed = value.trim();
+  const upper = trimmed.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper)) return upper;
+  for (const [name, code] of Object.entries(languages)) {
+    if (name.toLowerCase() === trimmed.toLowerCase()) return code;
   }
+  throw new Error(`Unknown language "${value}".`);
+}
 
-  const tokens = trimmed.split(/\s+/);
+function normalizeFormula(value = "") {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error("Formula flag requires a value.");
+  if (/^(no|off|false)$/i.test(trimmed)) return { apply: false, override: null };
+  if (/^(yes|on|true|default)$/i.test(trimmed)) return { apply: true, override: null };
+  let formatted = trimmed;
+  if (/^[0-9.]+$/.test(formatted)) formatted = `*${formatted}`;
+  return { apply: true, override: formatted };
+}
+
+export function parseSwitchInput(rawInput, defaults) {
+  const tokens = tokenize(rawInput.trim());
   const entries = [];
-  let current = { condition: defaults.condition, quantity: defaults.quantity };
-  let entryDirty = false;
+  let newDefaults = { ...defaults };
+  let pendingDefault = false;
+
+  const initCurrent = () => ({
+    condition: newDefaults.condition,
+    quantity: newDefaults.quantity,
+    language: newDefaults.language ?? null,
+    applyFormula: typeof newDefaults.applyFormula === "boolean" ? newDefaults.applyFormula : true,
+    formulaOverride: newDefaults.formulaOverride ?? null,
+  });
+
+  let current = initCurrent();
+  let conditionSet = false;
+
+  const setCondition = (cond, persist = false) => {
+    if (conditionSet) throw new Error("Only one condition flag allowed per card. Use -n to start a new entry.");
+    current.condition = cond;
+    conditionSet = true;
+    if (persist) newDefaults.condition = cond;
+  };
 
   const commitEntry = () => {
     entries.push({ ...current });
-    current = { condition: newDefaults.condition, quantity: newDefaults.quantity };
-    entryDirty = false;
+    if (pendingDefault) {
+      newDefaults = { ...current };
+      pendingDefault = false;
+    }
+    current = initCurrent();
+    conditionSet = false;
   };
 
+  if (!tokens.length) {
+    commitEntry();
+    return { entries, defaults: newDefaults };
+  }
+
   for (let i = 0; i < tokens.length; i++) {
-    let token = tokens[i];
-    if (!token.startsWith("-")) {
-      throw new Error(`Unexpected token "${token}". Flags must start with "-".`);
+    const token = tokens[i];
+    if (!token.startsWith("-")) throw new Error(`Unexpected token "${token}". Flags must start with "-".`);
+
+    if (token === "-default") {
+      pendingDefault = true;
+      continue;
     }
 
-    token = token.slice(1);
-    if (!token) throw new Error("Flag missing identifier after '-'.");
-
-    const flag = token[0];
-    let value = token.slice(1);
-    const isUpper = flag === flag.toUpperCase();
-    const flagLower = flag.toLowerCase();
-
-    if (!value && flagLower !== "n") {
-      if (i + 1 >= tokens.length) {
-        throw new Error(`Flag "-${flag}" requires a value.`);
-      }
+    const [, keyRaw = "", inlineValue = ""] = token.match(/^-([A-Za-z]+)(.*)$/) || [];
+    if (!keyRaw) throw new Error("Invalid flag syntax.");
+    const isUpper = keyRaw === keyRaw.toUpperCase();
+    const key = keyRaw.toLowerCase();
+    let value = inlineValue;
+    if (!value && i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
       value = tokens[++i];
     }
 
-    if (flagLower === "g") {
-      const condition = normalizeCondition(value);
-      if (!condition) {
-        const valid = Object.keys(CONDITION_MAP).join(", ");
-        throw new Error(`Unknown grade "${value}". Valid options: ${valid}`);
-      }
-      current.condition = condition;
-      entryDirty = true;
-      if (isUpper) newDefaults.condition = condition;
-    } else if (flagLower === "q") {
-      const qty = ensurePositiveInteger(value, "Quantity");
-      current.quantity = qty;
-      entryDirty = true;
-      if (isUpper) newDefaults.quantity = qty;
-    } else if (flagLower === "n") {
+    if (key === "n") {
       commitEntry();
-    } else {
-      throw new Error(`Unknown flag "-${flag}". Supported flags: -g, -q, -n (uppercase versions set defaults).`);
+      continue;
     }
+
+    if (key === "u") {
+      setCondition("Ungraded", isUpper);
+      continue;
+    }
+
+    if (key === "d") {
+      setCondition("Damaged", isUpper);
+      continue;
+    }
+
+    if (key === "g") {
+      const cond = normalizeCondition(`g${value || ""}`);
+      setCondition(cond, isUpper);
+      continue;
+    }
+
+    if (key === "q") {
+      current.quantity = ensurePositiveInteger(value, "Quantity");
+      if (isUpper) newDefaults.quantity = current.quantity;
+      continue;
+    }
+
+    if (key === "l" || key === "lang") {
+      current.language = normalizeLanguage(value || "");
+      if (isUpper) newDefaults.language = current.language;
+      continue;
+    }
+
+    if (key === "f") {
+      const { apply, override } = normalizeFormula(value || "");
+      current.applyFormula = apply;
+      current.formulaOverride = override;
+      if (isUpper) {
+        newDefaults.applyFormula = apply;
+        newDefaults.formulaOverride = override;
+      }
+      continue;
+    }
+
+    throw new Error(`Unknown flag "-${keyRaw}". Supported flags: -u, -d, -g, -q, -l/-lang, -f, -n, -default.`);
   }
 
-  if (entryDirty || !entries.length) {
-    entries.push({ ...current });
-  }
-
+  commitEntry();
   return { entries, defaults: newDefaults };
 }

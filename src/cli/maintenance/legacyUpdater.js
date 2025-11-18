@@ -189,11 +189,11 @@ export default async function runLegacyUpdater(config) {
       if (ensured?.id) expansionIconId = ensured.id;
     }
 
-    let originalValue = metafields.value ? parseFloat(metafields.value.value || "0") : null;
+    let originalValue = metafields.value?.value || "N/A";
     if (typeof scraped.price === "number" && !Number.isNaN(scraped.price)) {
       try {
         const converted = await convertUSD(scraped.price, targetCurrency);
-        originalValue = Number(Number(converted).toFixed(2));
+        originalValue = Number(Number(converted).toFixed(2)).toFixed(2);
       } catch (err) {
         console.warn(`Failed to convert base price for ${node.title}:`, err.message || err);
       }

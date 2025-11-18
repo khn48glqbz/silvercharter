@@ -88,6 +88,26 @@ export async function convertUSD(value, targetCurrency = "USD") {
   }
 }
 
+export async function convertToUSD(value, sourceCurrency = "USD") {
+  if (typeof value !== "number" || isNaN(value)) return value;
+  const src = (sourceCurrency || "USD").toUpperCase();
+  if (src === "USD") return value;
+
+  try {
+    const cacheRaw = await fs.readFile(CACHE_PATH, "utf8");
+    const cache = JSON.parse(cacheRaw);
+    const rate = cache?.rates?.[src];
+    if (typeof rate !== "number" || rate === 0) {
+      console.warn(`No cached rate for ${src}; returning original value.`);
+      return value;
+    }
+    return value / rate;
+  } catch (err) {
+    console.warn("Failed to read currency cache; returning original value.");
+    return value;
+  }
+}
+
 export function formatCurrency(value, currency = "USD") {
   const symbol = SYMBOL_MAP[currency.toUpperCase()] || `${currency} `;
   return `${symbol}${Number(value).toFixed(2)}`;

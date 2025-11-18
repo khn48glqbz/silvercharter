@@ -4,6 +4,7 @@ import { createSessionCSVWithId, listSessionFiles } from "../../utils/csv.js";
 import { getAndIncrementSessionId } from "../../utils/config.js";
 import runLegacyUpdater from "../maintenance/legacyUpdater.js";
 import runLegacyTagCleaner from "../maintenance/legacyTagCleaner.js";
+import normalizeValueMetafields from "../maintenance/normalizeValues.js";
 import runImportSession from "../sessions/importSession.js";
 
 export default async function importMenu(config) {
@@ -19,6 +20,7 @@ export default async function importMenu(config) {
           "Continue Import Session",
           "Update Legacy Cards",
           "Remove Legacy Tags",
+          "Normalize Value Metafields",
           "View Syntax",
           "Return",
         ],
@@ -55,18 +57,22 @@ export default async function importMenu(config) {
       await runLegacyUpdater(config);
     } else if (importChoice === "Remove Legacy Tags") {
       await runLegacyTagCleaner();
+    } else if (importChoice === "Normalize Value Metafields") {
+      await normalizeValueMetafields();
     } else if (importChoice === "View Syntax") {
       console.log(`
 Syntax Guide:
   URL only + blank switches: uses current defaults (initially Ungraded x1)
   Switch Flags:
-    -g9      → use Grade 9 for this import
-    -q3      → quantity 3 for this import
-    -G10     → set Grade 10 as the new default grade (uppercase = persistent)
-    -Q2      → set quantity 2 as the new default quantity
-    -n       → commit the current card and start defining another (batch in one line)
+    -c U        → condition (Ungraded/Damaged/Grade e.g. "-c g9.5")
+    -q 3        → quantity for this entry
+    -l JP       → override language (code or name)
+    -f 1.2      → use custom multiplier (or "-f off" to disable formula)
+    -n          → commit the current card and start another
+    -d          → make the current switches the new defaults
   Special commands at the URL prompt:
     "labels" → open the Labels menu for the active session
+    "custom" → add a card by entering details manually
     "return" → exit the current session
     "exit"   → quit the CLI entirely
 

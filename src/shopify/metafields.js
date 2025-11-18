@@ -99,22 +99,15 @@ export async function setProductMetafields(productId, fields = {}) {
     }
 
     if (rawValue !== undefined && rawValue !== null) {
-      let valueStr = null;
-      if (rawValue === "-") {
-        valueStr = "-";
-      } else {
-        const num = Number(rawValue);
-        if (!Number.isNaN(num)) valueStr = num.toFixed(2);
-      }
-      if (valueStr) {
-        metafields.push({
-          namespace: "pricecharting",
-          key: "value",
-          type: valueStr === "-" ? "single_line_text_field" : "number_decimal",
-          value: valueStr,
-          ownerId,
-        });
-      }
+      let valueStr = String(rawValue);
+      if (!valueStr.trim()) valueStr = "N/A";
+      metafields.push({
+        namespace: "pricecharting",
+        key: "value",
+        type: "single_line_text_field",
+        value: valueStr,
+        ownerId,
+      });
     }
 
     const gql = {
