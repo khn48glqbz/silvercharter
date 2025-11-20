@@ -1,8 +1,15 @@
 import axios from "axios";
 import { randomBytes } from "crypto";
 import { graphqlPost } from "./graphql.js";
+import { logDebug } from "../utils/logger.js";
 
 const iconCache = new Map();
+let fileSnapshot = null;
+let fileSnapshotTimestamp = 0;
+const SNAPSHOT_TTL_MS = 5 * 60 * 1000;
+const SNAPSHOT_LIMIT = 400;
+const SEARCH_BATCH_SIZE = 25;
+const SNAPSHOT_BATCH_SIZE = 50;
 
 function setCacheEntry(key, value) {
   if (!key) return;
@@ -10,18 +17,31 @@ function setCacheEntry(key, value) {
 }
 
 const FILES_QUERY = `
-  query ($query: String!) {
-    files(first: 25, query: $query) {
+  query ($first: Int!, $query: String, $cursor: String) {
+    files(first: $first, query: $query, after: $cursor) {
       edges {
+        cursor
         node {
           id
-          filename
-          url
+          __typename
           ... on MediaImage {
-            image { url }
+            image { url width height }
+          }
+          ... on GenericFile {
+            url
+          }
+          ... on Video {
+            originalSource { url }
+          }
+          ... on ExternalVideo {
+            originUrl
+          }
+          ... on Model3d {
+            originalSource { url }
           }
         }
       }
+      pageInfo { hasNextPage endCursor }
     }
   }
 `;
@@ -54,12 +74,33 @@ const STAGED_UPLOAD_MUTATION = `
   }
 `;
 
+function deriveFilenameFromUrl(url = "", fallback = "") {
+  if (!url) return fallback;
+  try {
+    const clean = url.split("?")[0];
+    const parts = clean.split("/");
+    const last = parts.pop();
+    return last || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function formatFileNode(node, fallbackFilename) {
   if (!node) return null;
+  const primaryUrl =
+    node.url ||
+    node.image?.url ||
+    node.originalSource?.url ||
+    node.originUrl ||
+    "";
+  const filename = node.filename || deriveFilenameFromUrl(primaryUrl, fallbackFilename);
   return {
     id: node.id,
-    filename: node.filename || fallbackFilename,
-    url: node.url || node.image?.url || "",
+    filename: filename || fallbackFilename,
+    url: primaryUrl,
+    width: node.image?.width ?? null,
+    height: node.image?.height ?? null,
   };
 }
 
@@ -88,9 +129,44 @@ function slugifyForSearch(value = "") {
     .replace(/^-+|-+$/g, "");
 }
 
-async function queryFiles(query) {
-  const res = await graphqlPost({ query: FILES_QUERY, variables: { query } });
-  return res?.data?.files?.edges?.map((edge) => edge.node) || [];
+async function runFilesQuery({ query = null, cursor = null, first = SEARCH_BATCH_SIZE } = {}) {
+  const variables = { query, cursor, first };
+  const res = await graphqlPost({ query: FILES_QUERY, variables });
+  const edges = res?.data?.files?.edges || [];
+  const nodes = edges.map((edge) => edge.node);
+  const pageInfo = res?.data?.files?.pageInfo || {};
+  return { nodes, pageInfo };
+}
+
+async function queryFiles(fragment) {
+  const { nodes } = await runFilesQuery({ query: fragment, first: SEARCH_BATCH_SIZE });
+  return nodes;
+}
+
+async function getAllFilesSnapshot(force = false) {
+  const now = Date.now();
+  if (!force && fileSnapshot && now - fileSnapshotTimestamp < SNAPSHOT_TTL_MS) {
+    return fileSnapshot;
+  }
+  let cursor = null;
+  const collected = [];
+  while (true) {
+    const { nodes, pageInfo } = await runFilesQuery({
+      query: null,
+      cursor,
+      first: SNAPSHOT_BATCH_SIZE,
+    });
+    collected.push(...nodes);
+    if (!pageInfo?.hasNextPage || collected.length >= SNAPSHOT_LIMIT) break;
+    cursor = pageInfo.endCursor;
+  }
+  const formatted = collected
+    .filter(Boolean)
+    .map((node) => formatFileNode(node, node?.filename || ""));
+  fileSnapshot = formatted;
+  fileSnapshotTimestamp = now;
+  logDebug("file snapshot refreshed", { count: formatted.length });
+  return formatted;
 }
 
 export async function findFileByFilename(filename) {
@@ -123,24 +199,37 @@ export async function findFileByFilename(filename) {
     if (!value) return;
     queryFragments.add(value);
   };
+  const addContains = (value) => {
+    if (!value) return;
+    const escaped = escapeSearchValue(value);
+    queryFragments.add(`filename:*${escaped}*`);
+  };
 
   addExact(trimmed);
+  addContains(trimmed);
   addGeneral(trimmed);
   if (baseName && baseName !== trimmed) {
     addExact(baseName);
     addWildcard(`${baseName}*`);
+    addContains(baseName);
     addGeneral(baseName);
   }
   if (slugVariant && slugVariant !== normalizedBase) {
     addExact(slugVariant);
     addWildcard(`${slugVariant}*`);
+    addContains(slugVariant);
     addGeneral(slugVariant);
   }
+
+  const fragmentsList = Array.from(queryFragments);
+  logDebug("findFileByFilename fragments", { filename: trimmed, fragments: fragmentsList });
 
   let matchedNode = null;
   for (const fragment of queryFragments) {
     try {
+      logDebug("findFileByFilename query", { fragment });
       const nodes = await queryFiles(fragment);
+      logDebug("findFileByFilename results", { fragment, count: nodes.length });
       if (!nodes.length) continue;
       const lowerNodes = nodes.map((n) => ({
         raw: n,
@@ -164,11 +253,31 @@ export async function findFileByFilename(filename) {
         lowerNodes[0]?.raw;
       if (matchedNode) break;
     } catch (err) {
+      logDebug("findFileByFilename error", { fragment, message: err.message || String(err) });
       continue;
     }
   }
 
   if (!matchedNode) {
+    try {
+      const snapshot = await getAllFilesSnapshot();
+      const fallback = snapshot.find(
+        (file) => (file.filename || "").toLowerCase() === exactLower
+      );
+      if (fallback) {
+        logDebug("findFileByFilename snapshot hit", {
+          filename: trimmed,
+          matched: fallback.filename,
+          id: fallback.id,
+        });
+        setCacheEntry(cacheKey, fallback);
+        if (fallback.filename) setCacheEntry(fallback.filename, fallback);
+        return fallback;
+      }
+    } catch (err) {
+      logDebug("findFileByFilename snapshot error", { message: err.message || String(err) });
+    }
+    logDebug("findFileByFilename miss", { filename: trimmed });
     setCacheEntry(cacheKey, null);
     return null;
   }
@@ -178,6 +287,7 @@ export async function findFileByFilename(filename) {
   if (matchedNode.filename) {
     setCacheEntry(matchedNode.filename, info);
   }
+  logDebug("findFileByFilename hit", { filename: trimmed, matched: info.filename, id: info.id });
   return info;
 }
 
@@ -198,20 +308,26 @@ export async function searchFilesByTerm(term) {
   pushQuery(`filename:"${escaped}"`);
   pushQuery(`filename:'${escapedSingle}'`);
   if (!trimmed.includes("*")) pushQuery(`filename:${escaped}*`);
+  pushQuery(`filename:*${escaped}*`);
 
   if (slug && slug !== trimmed) {
     pushQuery(slug);
     pushQuery(`filename:${slug}`);
     pushQuery(`filename:${slug}*`);
+    pushQuery(`filename:*${slug}*`);
   }
 
   const results = [];
   const seen = new Set();
+  logDebug("searchFilesByTerm fragments", { term: trimmed, fragments: queries });
   for (const fragment of queries) {
     let nodes = [];
     try {
+      logDebug("searchFilesByTerm query", { fragment });
       nodes = await queryFiles(fragment);
+      logDebug("searchFilesByTerm results", { fragment, count: nodes.length });
     } catch (err) {
+      logDebug("searchFilesByTerm error", { fragment, message: err.message || String(err) });
       continue;
     }
     for (const node of nodes) {
@@ -219,10 +335,30 @@ export async function searchFilesByTerm(term) {
       const info = formatFileNode(node, node.filename || trimmed);
       seen.add(info.id);
       results.push(info);
-      if (results.length >= 25) return results;
+      if (results.length >= 25) {
+        logDebug("searchFilesByTerm combined", { term: trimmed, count: results.length });
+        return results;
+      }
     }
   }
 
+  if (!results.length) {
+    try {
+      const snapshot = await getAllFilesSnapshot();
+      const lowerTerm = trimmed.toLowerCase();
+      const fallback = snapshot.filter((file) =>
+        (file.filename || "").toLowerCase().includes(lowerTerm)
+      );
+      if (fallback.length) {
+        logDebug("searchFilesByTerm snapshot hit", { term: trimmed, count: fallback.length });
+        return fallback.slice(0, 25);
+      }
+    } catch (err) {
+      logDebug("searchFilesByTerm snapshot error", { term: trimmed, message: err.message || String(err) });
+    }
+  }
+
+  logDebug("searchFilesByTerm combined", { term: trimmed, count: results.length });
   return results;
 }
 

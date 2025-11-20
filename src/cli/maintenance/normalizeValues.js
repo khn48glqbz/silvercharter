@@ -10,8 +10,8 @@ const PRODUCTS_QUERY = `
         node {
           id
           title
-          metafields(first: 5, namespace: "pricecharting", keys: ["value"]) {
-            edges { node { key value } }
+          valueMeta: metafield(namespace: "pricecharting", key: "value") {
+            value
           }
         }
       }
@@ -37,19 +37,20 @@ export default async function normalizeValueMetafields() {
 
   let cursor = null;
   let updated = 0;
+  let scanned = 0;
   while (true) {
     const res = await graphqlPost({ query: PRODUCTS_QUERY, variables: { cursor } });
     const edges = res?.data?.products?.edges || [];
     for (const edge of edges) {
       const node = edge.node;
-      const valueMeta = (node.metafields?.edges || [])
-        .map((e) => e.node)
-        .find((m) => m.key === "value");
-      if (valueMeta && valueMeta.value === "-") {
+      scanned += 1;
+      const value = node.valueMeta?.value;
+      const needsNormalize = value === "-" || value == null || String(value).trim() === "";
+      if (needsNormalize) {
         try {
           await setProductMetafields(node.id, { value: "null" });
           updated += 1;
-          console.log(`Updated ${node.title}`);
+          console.log(`Normalized ${node.title}`);
         } catch (err) {
           console.warn(`Failed to update ${node.title}:`, err.message || err);
         }
@@ -61,5 +62,5 @@ export default async function normalizeValueMetafields() {
     cursor = pageInfo.endCursor;
   }
 
-  console.log(`Normalization complete. Updated ${updated} product(s).`);
+  console.log(`Normalization complete. Scanned ${scanned} product(s). Updated ${updated}.`);
 }

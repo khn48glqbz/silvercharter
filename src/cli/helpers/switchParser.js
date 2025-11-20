@@ -47,6 +47,14 @@ function normalizeFormula(value = "") {
   return { apply: true, override: formatted };
 }
 
+function parseBoolean(value, defaultValue = false) {
+  if (value == null || value === "") return defaultValue;
+  const trimmed = String(value).trim();
+  if (/^false$/i.test(trimmed)) return false;
+  if (/^true$/i.test(trimmed)) return true;
+  return defaultValue;
+}
+
 export function parseSwitchInput(rawInput, defaults) {
   const tokens = tokenize(rawInput.trim());
   const entries = [];
@@ -59,6 +67,7 @@ export function parseSwitchInput(rawInput, defaults) {
     language: newDefaults.language ?? null,
     applyFormula: typeof newDefaults.applyFormula === "boolean" ? newDefaults.applyFormula : true,
     formulaOverride: newDefaults.formulaOverride ?? null,
+    signed: !!newDefaults.signed,
   });
 
   let current = initCurrent();
@@ -116,6 +125,13 @@ export function parseSwitchInput(rawInput, defaults) {
 
     if (key === "d") {
       setCondition("Damaged", isUpper);
+      continue;
+    }
+
+    if (key === "s") {
+      const boolValue = parseBoolean(value, true);
+      current.signed = boolValue;
+      if (isUpper) newDefaults.signed = boolValue;
       continue;
     }
 

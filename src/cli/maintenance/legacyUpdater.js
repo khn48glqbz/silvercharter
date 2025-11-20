@@ -138,7 +138,7 @@ export default async function runLegacyUpdater(config) {
     }
 
     const condition = metafields.condition?.value || "Ungraded";
-    const typeValue = singlesConditions.has(condition) ? "Singles" : "Slabs";
+    const typeValue = isSigned || singlesConditions.has(condition) ? "Singles" : "Slabs";
 
     let scraped;
     try {
@@ -188,6 +188,7 @@ export default async function runLegacyUpdater(config) {
       const ensured = await ensureExpansionIconFile(metadata.icon);
       if (ensured?.id) expansionIconId = ensured.id;
     }
+    const isSigned = (metafields.signature?.value || "").toLowerCase() === "true";
 
     let originalValue = metafields.value?.value || "N/A";
     if (typeof scraped.price === "number" && !Number.isNaN(scraped.price)) {
@@ -209,6 +210,7 @@ export default async function runLegacyUpdater(config) {
         type: typeValue,
         expansionIconId,
         value: originalValue,
+        signature: isSigned,
       });
       updatedMetafields += 1;
       console.log(`Refreshed metadata for ${node.title} (${condition})`);

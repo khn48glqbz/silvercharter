@@ -46,7 +46,12 @@ export default async function createDraftAndPublishToPos(card, config) {
     collection,
     expansionIconId,
     value,
+    signed = false,
   } = card;
+
+  if (signed && !title.includes("(Signature)")) {
+    title = `${title} (Signature)`;
+  }
 
   // If no barcode is provided, generate one
   if (!barcode) {
@@ -57,7 +62,7 @@ export default async function createDraftAndPublishToPos(card, config) {
   const productTypeValue = "Trading Card";
 
   try {
-    const existing = await findProductBySourceUrlAndCondition(sourceUrl, condition);
+    const existing = await findProductBySourceUrlAndCondition(sourceUrl, condition, { signed });
     const locationId = await getShopifyLocationId();
     if (!locationId) {
       console.warn("Could not get Shopify locationId; inventory updates will be skipped.");
@@ -91,6 +96,7 @@ export default async function createDraftAndPublishToPos(card, config) {
           vendor: resolvedVendor,
           product_type: productTypeValue,
           handle,
+          title,
         };
         if (existing.variantId) {
           updatePayload.variants = [{ id: existing.variantId, price, barcode }];
@@ -111,6 +117,7 @@ export default async function createDraftAndPublishToPos(card, config) {
         type: collection,
         expansionIconId,
         value,
+        signature: signed,
       });
 
       return { ...existing, barcode };
@@ -147,6 +154,7 @@ export default async function createDraftAndPublishToPos(card, config) {
       type: collection,
       expansionIconId,
       value,
+      signature: signed,
     });
 
     console.log(`Draft created: ${newProduct.title}`);

@@ -24,6 +24,7 @@ export async function setProductMetafields(productId, fields = {}) {
     const type = (fields.type || "").trim();
     const expansionIconId = (fields.expansionIconId || "").trim();
     const rawValue = fields.value;
+    const signature = typeof fields.signature === "boolean" ? fields.signature : null;
     const ownerId = normalizeOwnerId(productId);
 
     const metafields = [];
@@ -110,6 +111,16 @@ export async function setProductMetafields(productId, fields = {}) {
       });
     }
 
+    if (signature !== null) {
+      metafields.push({
+        namespace: "pricecharting",
+        key: "signature",
+        type: "single_line_text_field",
+        value: signature ? "true" : "false",
+        ownerId,
+      });
+    }
+
     const gql = {
       query: `
         mutation setMetafields($metafields: [MetafieldsSetInput!]!) {
@@ -144,7 +155,8 @@ export async function setProductMetafields(productId, fields = {}) {
 /**
  * Find a product by BOTH source_url and condition metafields.
  */
-export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
+export async function findProductBySourceUrlAndCondition(sourceUrl, condition, options = {}) {
+  const desiredSigned = !!options.signed;
   try {
     const cleanUrl = String(sourceUrl || "").split("?")[0].replace(/"/g, '\\"');
     const cond = String(condition || "Ungraded").replace(/"/g, '\\"');
@@ -214,6 +226,9 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
       };
     }
 
+    const signatureFlag = (metafields.signature?.value || "").toLowerCase() === "true";
+    if (desiredSigned !== signatureFlag) return null;
+
     return {
       id: node.id,
       title: node.title,
@@ -230,6 +245,7 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition) {
       type: metafields.type?.value || "",
       expansionIcon: metafields.expansion_icon?.reference?.id || "",
       value: metafields.value?.value ?? null,
+      signed: signatureFlag,
     };
   } catch (err) {
     console.warn("Failed to query product by source_url & condition:", err.message || err);

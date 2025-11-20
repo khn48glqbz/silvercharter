@@ -9,10 +9,32 @@ import {
 } from "../../shopify/productMutations.js";
 import { logLabelSession } from "../helpers/labelLogger.js";
 import { formatCurrency } from "../../utils/currency.js";
+import { gridPrompt } from "../helpers/gridPrompt.js";
+
+/**
+ * Products menu
+ * -------------
+ * Fetches all products tied to PriceCharting URLs, applies filters + sorting in-memory,
+ * and renders a spreadsheet-like grid.  Each product row exposes the most common edit
+ * actions (price, quantity, condition) using the shared Shopify helpers.
+ *
+ * The grid prompt lives in `src/cli/helpers/gridPrompt.js` and uses per-column widths so
+ * we can arrange the layout like a table without building a full TUI.
+ */
 
 const PAGE_SIZE = 15;
 const CONDITION_CHOICES = ["Ungraded", "Damaged", "Grade 7", "Grade 8", "Grade 9", "Grade 9.5", "Grade 10"];
 const singlesConditions = new Set(["Ungraded", "Damaged"]);
+const SORT_CHOICES = [
+  { name: "Date Added (Newest First)", key: "date", direction: "desc" },
+  { name: "Date Added (Oldest First)", key: "date", direction: "asc" },
+  { name: "Title (A → Z)", key: "title", direction: "asc" },
+  { name: "Title (Z → A)", key: "title", direction: "desc" },
+  { name: "Price (Low → High)", key: "price", direction: "asc" },
+  { name: "Price (High → Low)", key: "price", direction: "desc" },
+  { name: "Quantity (Low → High)", key: "quantity", direction: "asc" },
+  { name: "Quantity (High → Low)", key: "quantity", direction: "desc" },
+];
 
 const deriveType = (condition) => (condition && singlesConditions.has(condition) ? "Singles" : "Slabs");
 
@@ -30,13 +52,17 @@ export default async function viewProducts(config) {
     throw err;
   }
 
-  products = products.map((prod) => ({ ...prod, currency }));
+  let sortOption = { ...SORT_CHOICES[0] };
+  products = sortProducts(
+    products.map((prod) => ({ ...prod, currency })),
+    sortOption
+  );
   let filters = getDefaultFilters();
   let filtered = applyFilters(products, filters);
   let page = 0;
 
   while (true) {
-    const action = await showPageMenu(filtered, filters, page, currency);
+    const action = await showPageMenu(filtered, filters, page, currency, sortOption);
     if (action.type === "product") {
       const product = filtered[action.index];
       if (!product) continue;
@@ -44,6 +70,7 @@ export default async function viewProducts(config) {
       if (product.removed) {
         products = products.filter((p) => !p.removed);
       }
+      products = sortProducts(products, sortOption);
       filtered = applyFilters(products, filters);
       page = Math.min(page, Math.max(Math.ceil(filtered.length / PAGE_SIZE) - 1, 0));
       continue;
@@ -62,9 +89,15 @@ export default async function viewProducts(config) {
         filtered = applyFilters(products, filters);
       }
       page = 0;
+    } else if (action.type === "sort") {
+      sortOption = await promptSort(sortOption);
+      products = sortProducts(products, sortOption);
+      filtered = applyFilters(products, filters);
+      page = 0;
     } else if (action.type === "search") {
       const removed = await searchProductsByTerm(filtered, currency);
       if (removed) products = products.filter((p) => !p.removed);
+      products = sortProducts(products, sortOption);
       filtered = applyFilters(products, filters);
       page = Math.min(page, Math.max(Math.ceil(filtered.length / PAGE_SIZE) - 1, 0));
     } else if (action.type === "exit") {
@@ -111,35 +144,119 @@ function formatOriginalValue(value, currency) {
   return formatCurrency(num, currency);
 }
 
-async function showPageMenu(products, filters, page, currency) {
+function formatPriceCell(prod, currency) {
+  const retail = prod.price ? formatCurrency(prod.price, currency) : formatCurrency(0, currency);
+  const originalNum = Number(prod.pricechartingValue);
+  const originalValid = Number.isFinite(originalNum) && originalNum > 0;
+  const originalLabel = originalValid ? formatCurrency(originalNum, currency) : "-";
+  let markupLabel = "-";
+  if (originalValid) {
+    const priceNum = Number(prod.price) || 0;
+    if (priceNum > 0) {
+      const diff = ((priceNum - originalNum) / originalNum) * 100;
+      markupLabel = `${diff >= 0 ? "+" : ""}${diff.toFixed(0)}%`;
+    } else {
+      markupLabel = "0%";
+    }
+  }
+  return `${retail} | ${originalLabel} | ${markupLabel}`;
+}
+
+async function showPageMenu(products, filters, page, currency, sortOption) {
   const totalPages = Math.max(Math.ceil(products.length / PAGE_SIZE), 1);
   const start = page * PAGE_SIZE;
   const pageItems = products.slice(start, start + PAGE_SIZE);
-  console.log(`\nPage ${page + 1}/${totalPages} — ${products.length} products total.`);
-  const choices = pageItems.map((prod, idx) => ({
-    name: formatProductLine(prod, currency),
-    value: { type: "product", index: start + idx },
-  }));
 
-  const actionChoices = [
-    { name: "Next page", value: { type: "next" }, disabled: start + PAGE_SIZE >= products.length ? "End" : false },
-    { name: "Previous page", value: { type: "prev" }, disabled: page === 0 ? "Start" : false },
-    { name: "Change filters", value: { type: "filters" } },
-    { name: "Search products", value: { type: "search" } },
-    { name: "Exit", value: { type: "exit" } },
-  ];
+  if (!pageItems.length) {
+    const { selection } = await inquirer.prompt([
+      {
+        type: "list",
+        name: "selection",
+        message: "No products on this page. Choose an action:",
+        choices: [
+          { name: "Change filters", value: { type: "filters" } },
+          { name: "Search products", value: { type: "search" } },
+          { name: "Exit", value: { type: "exit" } },
+        ],
+      },
+    ]);
+    return selection;
+  }
 
-  const { selection } = await inquirer.prompt([
-    {
-      type: "list",
-      name: "selection",
-      message: "Select a product or action:",
-      choices: [...choices, new inquirer.Separator(), ...actionChoices],
-      pageSize: Math.min(choices.length + actionChoices.length + 2, 50),
-    },
+  const columns = 6;
+  const placeholder = { name: " ", short: " ", value: { type: "noop" } };
+  const disabledCell = (label) => ({ name: label, short: label, value: { type: "noop" } });
+  const rows = [];
+  const pushRow = (cells) => {
+    const row = [...cells];
+    while (row.length < columns) row.push({ ...placeholder });
+    rows.push(row);
+  };
+
+  const summary = `Page ${page + 1}/${totalPages} — ${products.length} products total. Sort: ${sortOption?.name || SORT_CHOICES[0].name}`;
+
+  const canNext = start + PAGE_SIZE < products.length;
+  const canPrev = page > 0;
+  pushRow([
+    canNext ? { name: "Next", short: "Next", value: { type: "next" } } : disabledCell("Next"),
+    canPrev ? { name: "Previous", short: "Previous", value: { type: "prev" } } : disabledCell("Previous"),
+    { name: "Filters", short: "Filters", value: { type: "filters" } },
+    { name: "Sort", short: "Sort", value: { type: "sort" } },
+    { name: "Search", short: "Search", value: { type: "search" } },
+    { name: "Exit", short: "Exit", value: { type: "exit" } },
   ]);
+  for (let row = 0; row < pageItems.length; row += 1) {
+    const prod = pageItems[row];
+    const idx = start + row;
+    const qty = prod.inventoryQuantity == null ? "?" : prod.inventoryQuantity;
+    const priceLabel = formatPriceCell(prod, currency);
+    const titleLabel = prod.title.length > 36 ? `${prod.title.slice(0, 33)}...` : prod.title;
+    const expansionLabel =
+      prod.expansion && prod.expansion.length > 30 ? `${prod.expansion.slice(0, 27)}...` : prod.expansion || "Unknown";
 
-  return selection;
+    pushRow([
+      { name: titleLabel, short: prod.title, value: { type: "product", index: idx, field: "actions" } },
+      {
+        name: `${prod.type || "??"} | ${prod.condition || "Unknown"}`,
+        short: `${prod.type || "??"} | ${prod.condition || "Unknown"}`,
+        value: { type: "product", index: idx, field: "condition" },
+      },
+      {
+        name: priceLabel,
+        short: priceLabel,
+        value: { type: "product", index: idx, field: "price" },
+      },
+      {
+        name: `Quantity: ${qty}`,
+        short: `Quantity: ${qty}`,
+        value: { type: "product", index: idx, field: "quantity" },
+      },
+      {
+        name: `${expansionLabel} | ${prod.language || "??"} | ${prod.expansionIcon ? "Icon" : "Blank"}`,
+        short: `${expansionLabel} | ${prod.language || "??"} | ${prod.expansionIcon ? "Icon" : "Blank"}`,
+        value: { type: "product", index: idx, field: "actions" },
+      },
+      {
+        name: "Additional Options",
+        short: "Additional Options",
+        value: { type: "product", index: idx, field: "actions" },
+      },
+    ]);
+  }
+
+  const flatChoices = rows.flat();
+
+  const columnWidths = [34, 20, 30, 14, 34, 20];
+
+  while (true) {
+    const selection = await gridPrompt(
+      `${summary}\nSelect a product or action:`,
+      rows.flat(),
+      { columns, columnWidth: 32, columnWidths, exitValue: { type: "exit" } }
+    );
+    if (!selection || selection.type === "noop" || selection.type === "header") continue;
+    return selection;
+  }
 }
 
 async function editProduct(product, currency, preferredField) {
@@ -232,6 +349,42 @@ async function editProduct(product, currency, preferredField) {
       }
     }
   }
+}
+
+function sortProducts(list, option) {
+  if (!option) return [...list];
+  const dir = option.direction === "desc" ? -1 : 1;
+  const key = option.key;
+  return [...list].sort((a, b) => {
+    const av = getSortValue(a, key);
+    const bv = getSortValue(b, key);
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+}
+
+function getSortValue(product, key) {
+  if (key === "price") return Number(product.price) || 0;
+  if (key === "quantity") return Number(product.inventoryQuantity) || 0;
+  if (key === "date") return product.createdAt ? product.createdAt.getTime() : 0;
+  return (product.title || "").toLowerCase();
+}
+
+async function promptSort(currentOption) {
+  const { selection } = await inquirer.prompt([
+    {
+      type: "list",
+      name: "selection",
+      message: "Sort products by:",
+      choices: SORT_CHOICES.map((choice) => ({
+        name: choice.name,
+        value: choice,
+      })),
+      default: currentOption?.name || SORT_CHOICES[0].name,
+    },
+  ]);
+  return { ...selection };
 }
 
 async function promptFilters(products, current) {

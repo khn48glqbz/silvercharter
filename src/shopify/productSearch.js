@@ -2,7 +2,7 @@ import { graphqlPost } from "./graphql.js";
 
 const PRODUCTS_QUERY = `
   query ($cursor: String) {
-    products(first: 50, after: $cursor, query: "metafields.pricecharting.source_url:*") {
+    products(first: 50, after: $cursor, sortKey: CREATED_AT, reverse: true, query: "metafields.pricecharting.source_url:*") {
       edges {
         cursor
         node {
@@ -10,6 +10,7 @@ const PRODUCTS_QUERY = `
           title
           vendor
           handle
+          createdAt
           tags
           metafields(first: 20, namespace: "pricecharting") {
             edges {
@@ -62,6 +63,7 @@ export async function fetchAllPricechartingProducts(progressCb) {
         vendor: node.vendor,
         handle: node.handle,
         tags: node.tags || [],
+        createdAt: node.createdAt ? new Date(node.createdAt) : null,
         condition,
         type: typeValue,
         game: metafields.game || "",
@@ -69,6 +71,7 @@ export async function fetchAllPricechartingProducts(progressCb) {
         language: metafields.language || "",
         sourceUrl: metafields.source_url || "",
         pricechartingValue: metafields.value || "",
+        expansionIcon: metafields.expansion_icon || "",
         barcode: variant.barcode || "",
         price: variant.price || "",
         inventoryQuantity: variant.inventoryQuantity ?? null,

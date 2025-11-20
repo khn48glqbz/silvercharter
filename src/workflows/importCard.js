@@ -13,12 +13,13 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
     formulaOverride = null,
     applyFormula = true,
     languageOverride = null,
+    signed = false,
   } = options;
   let existingProduct = null;
-  const collectionType = singlesConditions.has(condition) ? "Singles" : "Slabs";
+  const collectionType = signed || singlesConditions.has(condition) ? "Singles" : "Slabs";
 
   try {
-    existingProduct = await findProductBySourceUrlAndCondition(url, condition);
+    existingProduct = await findProductBySourceUrlAndCondition(url, condition, { signed });
   } catch (err) {
     console.warn("Shopify pre-check failed (continuing to scrape):", err.message);
   }
@@ -41,6 +42,7 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
           collection: collectionType,
           value: existingProduct.value,
           expansionIconId: existingProduct.expansionIcon,
+          signed: existingProduct.signed,
         },
         config
       );
@@ -73,7 +75,18 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
   const expansion = metadata.expansion || "Unknown Expansion";
   let languageCode = metadata.languageCode || "EN";
   if (languageOverride) languageCode = languageOverride;
-  const vendor = metadata.vendor || game;
+  let vendor = (metadata.vendor || "").trim();
+  if (!vendor) {
+    const { manualVendor } = await inquirer.prompt([
+      {
+        name: "manualVendor",
+        message: `Vendor not found for ${scraped.name}. Enter vendor/publisher:`,
+        default: game,
+        validate: (input) => !!input.trim() || "Vendor cannot be blank.",
+      },
+    ]);
+    vendor = manualVendor.trim() || game;
+  }
   const expansionIconInfo = metadata.icon ? await ensureExpansionIconFile(metadata.icon) : null;
   const priceTable = scraped.prices || {};
   const userCurrency = (config?.currency || "USD").toUpperCase();
@@ -89,6 +102,7 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
   }
 
   const needsManual =
+    signed ||
     basePrice == null ||
     Number.isNaN(basePrice) ||
     (hasDedicatedPrice && (priceTable[condition] == null || Number.isNaN(priceTable[condition])));
@@ -99,7 +113,9 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
       {
         type: "input",
         name: "manualPrice",
-        message: `No price found for ${scraped.name} (${condition}). Enter manual ${userCurrency} price:`,
+        message: signed
+          ? `Signed cards require manual pricing. Enter ${userCurrency} price:`
+          : `No price found for ${scraped.name} (${condition}). Enter manual ${userCurrency} price:`,
         validate: (input) => (!isNaN(parseFloat(input)) && parseFloat(input) >= 0) || "Enter a valid non-negative number",
       },
     ]);
@@ -118,15 +134,18 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
     originalValueDisplay = Number(Number(pricingResult.converted).toFixed(2)).toFixed(2);
     finalPrice = pricingResult.final;
   }
-  if (!pricingResult) {
+  if (signed) {
+    originalValueDisplay = "null";
+  } else if (!pricingResult) {
     originalValueDisplay = Number(Number(finalPrice).toFixed(2)).toFixed(2) || "null";
   }
 
-  console.log(`Uploading ${scraped.name} (${quantity}x, ${condition}) — ${config.currency || "GBP"} ${finalPrice.toFixed(2)}`);
+  const displayTitle = signed ? `${scraped.name} (Signature)` : scraped.name;
+  console.log(`Uploading ${displayTitle} (${quantity}x, ${condition}) — ${config.currency || "GBP"} ${finalPrice.toFixed(2)}`);
 
   const result = await createDraftAndPublishToPos(
     {
-      title: scraped.name,
+      title: displayTitle,
       price: finalPrice,
       quantity,
       sourceUrl: url,
@@ -139,6 +158,7 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
       collection: collectionType,
       value: originalValueDisplay,
       expansionIconId: expansionIconInfo?.id || null,
+      signed,
     },
     config
   );
@@ -146,7 +166,7 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
   appendCsvRows(
     csvPath,
     result?.variants?.[0]?.barcode ?? scraped.barcode ?? "",
-    scraped.name,
+    displayTitle,
     game,
     expansion,
     languageCode,
@@ -156,5 +176,5 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
     quantity
   );
 
-  console.log(`Created new product with metafields: ${scraped.name} (${condition})`);
+  console.log(`Created new product with metafields: ${displayTitle} (${condition})`);
 }

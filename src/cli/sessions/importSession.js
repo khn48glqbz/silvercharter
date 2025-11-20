@@ -13,6 +13,7 @@ export default async function runImportSession(config, csvPath) {
     language: null,
     applyFormula: true,
     formulaOverride: null,
+    signed: false,
   };
 
   while (true) {
@@ -79,6 +80,7 @@ export default async function runImportSession(config, csvPath) {
         entry.language ? `lang:${entry.language}` : null,
         entry.formulaOverride ? `f:${entry.formulaOverride}` : null,
         entry.applyFormula === false ? "formula:off" : null,
+        entry.signed ? "signed" : null,
       ]
         .filter(Boolean)
         .join(" ");
@@ -105,6 +107,7 @@ export default async function runImportSession(config, csvPath) {
           formulaOverride: entry.formulaOverride,
           applyFormula: entry.applyFormula,
           languageOverride: entry.language,
+          signed: entry.signed,
         });
       }
     } catch (err) {
