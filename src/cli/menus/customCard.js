@@ -593,7 +593,7 @@ export default async function handleCustomCard(config, csvPath) {
 
     appendCsvRows(
       csvPath,
-      result?.variants?.[0]?.barcode ?? "",
+      result?.barcode ?? "",
       displayTitle,
       game,
       expansion,

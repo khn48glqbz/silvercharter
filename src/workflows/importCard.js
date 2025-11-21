@@ -165,7 +165,7 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
 
   appendCsvRows(
     csvPath,
-    result?.variants?.[0]?.barcode ?? scraped.barcode ?? "",
+    result?.barcode ?? scraped.barcode ?? "",
     displayTitle,
     game,
     expansion,

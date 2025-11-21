@@ -274,7 +274,7 @@ async function editProduct(product, currency, preferredField) {
     const rounded = Number(newPrice).toFixed(2);
     const spinner = ora("Updating price...").start();
     try {
-      await updateVariantPrice(product.variantId, rounded);
+      await updateVariantPrice(product.id, product.variantId, rounded);
       spinner.succeed("Price updated.");
       product.price = rounded;
       const qtyForLabels = product.inventoryQuantity == null ? 1 : Math.max(1, Number(product.inventoryQuantity));

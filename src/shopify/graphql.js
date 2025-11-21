@@ -1,13 +1,25 @@
 import axios from "axios";
+import dotenv from "dotenv";
+import path from "path";
+
+const ENV_PATH = path.join(process.cwd(), "data", ".env");
+dotenv.config({ path: ENV_PATH });
+
+let cachedBase = null;
+let cachedToken = null;
 
 export function buildShopifyBase() {
+  if (cachedBase) return cachedBase;
   const raw = (process.env.SHOPIFY_STORE_URL || "").trim();
   if (!raw) return null;
-  return /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, "") : `https://${raw.replace(/\/+$/, "")}`;
+  cachedBase = /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, "") : `https://${raw.replace(/\/+$/, "")}`;
+  return cachedBase;
 }
 
 export function getShopifyToken() {
-  return (process.env.SHOPIFY_ADMIN_TOKEN || "").trim();
+  if (cachedToken) return cachedToken;
+  cachedToken = (process.env.SHOPIFY_ADMIN_TOKEN || "").trim();
+  return cachedToken;
 }
 
 export async function graphqlPost(body) {
@@ -24,5 +36,9 @@ export async function graphqlPost(body) {
     },
     timeout: 15000,
   });
-  return res.data;
+  const payload = res.data;
+  if (payload?.errors?.length) {
+    throw new Error(payload.errors.map((err) => err.message).join("; "));
+  }
+  return payload;
 }

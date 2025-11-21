@@ -1,6 +1,8 @@
 // src/shopify/metafields.js
 import { graphqlPost } from "./graphql.js";
 
+let cachedLocationId = null;
+
 function normalizeOwnerId(productId) {
   const raw = String(productId || "").trim();
   if (!raw) return "";
@@ -257,7 +259,8 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition, o
  * Fetch the Shopify location ID (for inventory updates)
  * Returns the first active location ID, or null on failure.
  */
-export async function getShopifyLocationId() {
+export async function getShopifyLocationId(forceRefresh = false) {
+  if (cachedLocationId && !forceRefresh) return cachedLocationId;
   try {
     const gql = {
       query: `
@@ -281,9 +284,9 @@ export async function getShopifyLocationId() {
       return null;
     }
 
-    const locationId = edge.node.id;
-    console.log(`Using Shopify location: ${edge.node.name} (${locationId})`);
-    return locationId;
+    cachedLocationId = edge.node.id;
+    console.log(`Using Shopify location: ${edge.node.name} (${cachedLocationId})`);
+    return cachedLocationId;
   } catch (err) {
     console.warn("Failed to fetch Shopify location ID:", err.message || err);
     return null;
