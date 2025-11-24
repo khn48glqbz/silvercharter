@@ -5,8 +5,10 @@ node_modules/
 data/.env
 
 # Dynamic data
-data/settings.json
-data/currency.json
+data/config/
+data/cache/
+data/logs/
+
 
 # Logs
 npm-debug.log*
@@ -25,7 +27,4 @@ Thumbs.db
 .idea/
 
 # Personal notes
-data/tree.txt
-data/unicode.txt
-data/currency.json
-data/silvercharter.log
+docs/

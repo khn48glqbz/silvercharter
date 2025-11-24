@@ -2,7 +2,7 @@
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { initCurrencyCache } from "./src/utils/currency.js";
+import { initCurrencyCache } from "./src/shared/util/currency.js";
 
 // ensure working directory is project root when running via node src/index.js
 const __filename = fileURLToPath(import.meta.url);
@@ -15,9 +15,9 @@ dotenv.config({ path: path.join(process.cwd(), "data", ".env") });
 await initCurrencyCache();
 
 // Start CLI
-import mainMenu from "./src/cli/menus/mainMenu.js";
+import runCli from "./src/cli/app.js";
 
-mainMenu().catch((err) => {
+runCli().catch((err) => {
   console.error("Fatal error:", err && err.message ? err.message : err);
   process.exit(1);
 });
