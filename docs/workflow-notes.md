@@ -67,7 +67,8 @@ This document captures the current state of the CLI so that future sessions can 
 - `condition`, `type`, `game`, `expansion`, `language`.
 - `expansion_icon` – file reference to the Shopify icon file.
 - `value` – stored PriceCharting value (string, `"null"` when unknown).
-- `signature` – `"true"` when the card is signed.
+- `signature` – `"true"` when the card is signed (legacy flag).
+- `attributes` – JSON or string list of traits (e.g., `"Signature"` or `["Signature"]`; defaults to `"None"` when empty).
 
 ### Shopify Helpers
 
@@ -88,5 +89,6 @@ This document captures the current state of the CLI so that future sessions can 
 - Extract the custom-card workflow into smaller helpers (game/expansion selection, icon selection/upload, pricing/signed handling) to improve readability and testability.
 - Add regression tests for pure modules (switch-parser, pricing-engine, currency helpers, CSV writer) using a test runner (e.g., Jest/Vitest) to prevent prompt regressions.
 - Harden PriceCharting scraping by adding selector fallbacks or alternate endpoints to avoid manual pricing when the site markup changes.
+- Expansion icon uploads: Shopify always creates a new file and auto-suffixes the filename on collision (e.g., `pokemon-japanese-promo_…`). There is no “cancel if duplicate” server-side. To avoid duplicates, the code must first search Files by the slug (e.g., `pokemon-japanese-promo`) and reuse the existing file ID; only upload if not found.
 
 This document should give the next engineer enough context to continue work without replaying the whole session.
