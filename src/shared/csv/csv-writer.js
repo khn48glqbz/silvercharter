@@ -2,7 +2,7 @@
 import fs from "fs";
 import path from "path";
 
-const LABELS_DIR = path.join(process.cwd(), "labels");
+const LABELS_DIR = path.join(process.cwd(), "data", "labels");
 
 function ensureLabelsDir() {
   if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR, { recursive: true });
