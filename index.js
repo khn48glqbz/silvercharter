@@ -8,8 +8,8 @@ import { initCurrencyCache } from "./src/shared/util/currency.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load env from data/.env (if exists)
-dotenv.config({ path: path.join(process.cwd(), "data", ".env") });
+// Load env from data/config/.env (if exists)
+dotenv.config({ path: path.join(process.cwd(), "data", "config", ".env") });
 
 // Initialize currency cache (best-effort)
 await initCurrencyCache();
