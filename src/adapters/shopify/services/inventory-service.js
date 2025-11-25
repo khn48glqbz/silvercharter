@@ -1,5 +1,5 @@
 import { getRestClient } from "../client/client.js";
-import { getShopifyLocationId } from "./metafield-service.js";
+import { getShopifyLocationId, getCachedLocationNumeric } from "./metafield-service.js";
 
 const trackedCache = new Set();
 
@@ -29,7 +29,8 @@ async function ensureInventoryTracking(inventoryItemId) {
 
 async function ensureInventoryConnection(inventoryItemId) {
   const rest = getRestClient();
-  const locationId = await getShopifyLocationId();
+  const cachedNumeric = getCachedLocationNumeric();
+  const locationId = cachedNumeric || (await getShopifyLocationId());
   const numericItemId = normalizeId(inventoryItemId);
   const numericLocationId = normalizeId(locationId);
   if (!numericItemId || !numericLocationId) {

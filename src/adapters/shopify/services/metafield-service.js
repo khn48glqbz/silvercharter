@@ -3,6 +3,7 @@ import { graphqlPost } from "../client/graphql.js";
 
 let cachedLocationId = null;
 let cachedLocationIdStr = null;
+let cachedLocationNumeric = null;
 
 function normalizeOwnerId(productId) {
   const raw = String(productId || "").trim();
@@ -287,6 +288,7 @@ export async function getShopifyLocationId(forceRefresh = false) {
 
     cachedLocationId = edge.node.id;
     cachedLocationIdStr = cachedLocationId ? String(cachedLocationId) : null;
+    cachedLocationNumeric = cachedLocationIdStr ? cachedLocationIdStr.replace(/\\D/g, "") : null;
     console.log(`Using Shopify location: ${edge.node.name} (${cachedLocationId})`);
     return cachedLocationId;
   } catch (err) {
@@ -301,4 +303,8 @@ export function getCachedLocationId() {
 
 export function getCachedLocationIdStr() {
   return cachedLocationIdStr;
+}
+
+export function getCachedLocationNumeric() {
+  return cachedLocationNumeric;
 }
