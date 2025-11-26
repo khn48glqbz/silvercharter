@@ -1,6 +1,20 @@
 // src/utils/pricing.js
 import { convertUSD } from "../../shared/util/currency.js";
 
+function parseRoundingTarget(raw) {
+  if (raw == null) return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+  if (/^-?\d+(\.\d+)?$/.test(str)) {
+    const num = parseFloat(str);
+    if (!Number.isFinite(num)) return null;
+    // If the target looks like "99" or "50", treat as cents -> divide by 100.
+    if (num > 1) return Math.max(0, Math.min(1, num / 100));
+    return Math.max(0, Math.min(1, num));
+  }
+  return null;
+}
+
 /**
  * Apply arithmetic pricing formula.
  * Accepts formulas that start with an operator (e.g. "*1.2", "+3", "/2")
@@ -31,58 +45,87 @@ export function applyPricingFormula(base, formula) {
 }
 
 /**
- * Round up to nearest .99 (e.g. 107.58 → 107.99)
+ * Rounding helper for arbitrary targets and modes.
+ * rounding = { mode: "up" | "down" | "nearest", targets: [Number, ...] }
  */
-export function roundUpTo99(value) {
-  if (typeof value !== "number" || isNaN(value)) return value;
-  const cents = Math.round((value - Math.floor(value)) * 100);
-  if (cents === 99) return Number(value.toFixed(2));
+export function applyRounding(value, rounding) {
+  if (!rounding || typeof rounding !== "object") return Number(Number(value).toFixed(2));
+  const mode = (rounding.mode || "nearest").toLowerCase();
+  if (mode === "none") {
+    return Number(Number(value).toFixed(2));
+  }
+  const parsedTargets = (Array.isArray(rounding.targets) ? rounding.targets : [rounding.targets]).map(parseRoundingTarget).filter((t) => t !== null);
+  const targets = parsedTargets.length ? parsedTargets : [0.99];
 
-  let nextWhole = Math.ceil(value);
-  let candidate = Number((nextWhole - 0.01).toFixed(2));
+  const candidates = [];
+  const abs = Math.abs;
 
-  if (candidate < value) {
-    nextWhole += 1;
-    candidate = Number((nextWhole - 0.01).toFixed(2));
+  for (const target of targets) {
+    const frac = target;
+    const baseInt = Math.floor(value);
+    const lower = baseInt + frac - 1; // previous target
+    const upper = baseInt + frac; // current target in this integer band
+
+    if (mode === "up") {
+      const candidate = value <= upper ? upper : upper + 1;
+      candidates.push({ value: candidate, delta: candidate - value });
+    } else if (mode === "down") {
+      const candidate = value >= upper ? upper : upper - 1;
+      candidates.push({ value: candidate, delta: value - candidate });
+    } else {
+      // nearest
+      const below = value >= upper ? upper : upper - 1;
+      const above = value <= upper ? upper : upper + 1;
+      const deltaBelow = abs(value - below);
+      const deltaAbove = abs(above - value);
+      const pickAbove = deltaAbove <= deltaBelow;
+      const candidate = pickAbove ? above : below;
+      candidates.push({ value: candidate, delta: pickAbove ? deltaAbove : deltaBelow, tiePrefers: pickAbove ? "above" : "below" });
+    }
   }
 
-  return candidate;
-}
+  if (!candidates.length) return Number(Number(value).toFixed(2));
 
-/**
- * Round down to nearest .99 below the value.
- * Examples:
- *  1.89 -> 0.99
- *  2.00 -> 1.99
- *  3.74 -> 2.99
- * Minimum enforced: 0.99
- */
-export function roundDownTo99(value) {
-  if (typeof value !== "number" || isNaN(value)) return value;
-  const cents = Math.round((value - Math.floor(value)) * 100);
-  if (cents === 99) return Number(value.toFixed(2));
-  const floored = Math.floor(value);
-  const candidate = (floored - 1) + 0.99;
-  return Number(Math.max(0.99, Number(candidate.toFixed(2))).toFixed(2));
-}
+  if (mode === "up") {
+    const chosen = candidates.reduce((best, c) => {
+      if (c.value < value) return best;
+      if (!best || c.value < best.value) return c;
+      return best;
+    }, null);
+    return Number(Number((chosen?.value ?? value)).toFixed(2));
+  }
 
-/**
- * Retrieve the pricing formula string for a given grade/condition.
- * Falls back to "*1" if not found.
- */
-export function getFormulaForCondition(condition, config) {
-  const table = config?.formula || {};
-  const entry = table[condition];
-  return typeof entry === "string" ? entry : "*1";
+  if (mode === "down") {
+    const chosen = candidates.reduce((best, c) => {
+      if (c.value > value) return best;
+      if (!best || c.value > best.value) return c;
+      return best;
+    }, null);
+    const minTarget = Math.min(...targets, 0);
+    const clamped = Math.max(chosen?.value ?? value, minTarget);
+    return Number(Number(clamped).toFixed(2));
+  }
+
+  // nearest
+  const chosen = candidates.reduce((best, c) => {
+    if (!best) return c;
+    if (c.delta < best.delta) return c;
+    if (c.delta === best.delta) {
+      // tie-break upward
+      return c.value >= value ? c : best;
+    }
+    return best;
+  }, null);
+  return Number(Number((chosen?.value ?? value)).toFixed(2));
 }
 
 /**
  * calculateFinalPrice:
  * - amountUSD: number
- * - config: your config object where config.formula is an object (mapping) that also contains roundTo99
+ * - config: your config object where config.formula is an object mapping conditions to { multiplier, rounding }
  * - selectedGrade: optional string like "Ungraded" or "Grade 9.5"
  *
- * Returns: { converted, formulaResult, final, roundTo99, usedFormula }
+ * Returns: { converted, formulaResult, final, rounding, usedFormula }
  */
 export async function calculateFinalPrice(
   amountUSD,
@@ -102,41 +145,39 @@ export async function calculateFinalPrice(
   // formulaTable is the object stored in settings.json under "formula"
   const formulaTable = (config && typeof config.formula === "object") ? config.formula : {};
 
-  // Determine which formula string to use
-  let formulaStr;
-  if (overrideFormula) {
-    formulaStr = overrideFormula;
-  } else if (selectedGrade && typeof formulaTable[selectedGrade] === "string") {
-    formulaStr = formulaTable[selectedGrade];
-  } else if (typeof config.formula === "string") {
-    formulaStr = config.formula;
-  } else {
-    formulaStr = formulaTable["Ungraded"] || "*1";
-  }
+  const normalizeEntry = (val) => {
+    if (val && typeof val === "object") return val;
+    if (typeof val === "string") return { multiplier: val };
+    return { multiplier: "*1" };
+  };
+
+  const selectedEntry = normalizeEntry(selectedGrade ? formulaTable[selectedGrade] : null);
+  const defaultEntry = normalizeEntry(formulaTable["Ungraded"]);
+  const entry = overrideFormula
+    ? { multiplier: overrideFormula, rounding: selectedEntry.rounding || defaultEntry.rounding || formulaTable.roundingDefault }
+    : {
+        multiplier: selectedEntry.multiplier || defaultEntry.multiplier || "*1",
+        rounding: selectedEntry.rounding || defaultEntry.rounding || formulaTable.roundingDefault,
+      };
+
+  let formulaStr = entry.multiplier || "*1";
 
   let formulaResult = Number(converted);
   if (applyFormula && formulaStr) {
     formulaResult = applyPricingFormula(Number(converted), formulaStr);
   }
 
-  // roundTo99 read from the formulaTable object (so it remains grouped with formulas)
-  const shouldRound = !!formulaTable.roundTo99;
-
-  // Special handling for Damaged condition: round DOWN to .99 (customer request)
-  let final;
-  if (selectedGrade === "Damaged") {
-    final = roundDownTo99(formulaResult);
-  } else if (shouldRound) {
-    final = roundUpTo99(formulaResult);
-  } else {
-    final = Number(Number(formulaResult).toFixed(2));
+  const rounding = entry.rounding || null;
+  let final = Number(Number(formulaResult).toFixed(2));
+  if (rounding) {
+    final = applyRounding(formulaResult, rounding);
   }
 
   return {
     converted,
     formulaResult: Number(Number(formulaResult).toFixed(2)),
     final,
-    roundTo99: shouldRound,
+    rounding,
     usedFormula: formulaStr,
   };
 }

@@ -9,14 +9,13 @@ const SETTINGS_PATH = path.join(CONFIG_DIR, "settings.json");
 const DEFAULT_CONFIG = {
   currency: "GBP",
   formula: {
-    Damaged: "*0.9",
-    Ungraded: "*1.2",
-    "Grade 7": "*1.4",
-    "Grade 8": "*1.5",
-    "Grade 9": "*1.8",
-    "Grade 9.5": "*2",
-    "Grade 10": "*2.5",
-    roundTo99: true,
+    Damaged: { multiplier: "*0.8", rounding: { mode: "down", targets: [0.99] } },
+    Ungraded: { multiplier: "*1", rounding: { mode: "up", targets: [0.99] } },
+    "Grade 7": { multiplier: "*1", rounding: { mode: "nearest", targets: [0.99] } },
+    "Grade 8": { multiplier: "*1", rounding: { mode: "nearest", targets: [0.99] } },
+    "Grade 9": { multiplier: "*1", rounding: { mode: "nearest", targets: [0.99] } },
+    "Grade 9.5": { multiplier: "*1", rounding: { mode: "nearest", targets: [0.99] } },
+    "Grade 10": { multiplier: "*1", rounding: { mode: "nearest", targets: [0.99] } },
   },
   sessionID: 0,
 };
@@ -31,29 +30,62 @@ function normalizeConfig(rawConfig = {}) {
 
   if (!normalized.currency) normalized.currency = DEFAULT_CONFIG.currency;
   if (typeof normalized.sessionID !== "number") normalized.sessionID = 0;
-  // Handle legacy "pricing" shape by upgrading to formula table
-  if (!normalized.formula || typeof normalized.formula !== "object") {
-    normalized.formula = {};
+  if (normalized.shopify) delete normalized.shopify;
+  const normalizeEntry = (value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const entry = { ...value };
+      if (!entry.multiplier) entry.multiplier = "*1";
+      return entry;
+    }
+    if (typeof value === "string") return { multiplier: value };
+    return { multiplier: "*1" };
+  };
+
+  // Start fresh formula object
+  let formula = {};
+  if (normalized.formula && typeof normalized.formula === "object") {
+    formula = { ...normalized.formula };
   }
 
+  // Handle legacy "pricing" shape by upgrading to formula table
   if (normalized.pricing && typeof normalized.pricing === "object") {
-    if (!Object.keys(normalized.formula).length && typeof normalized.pricing.formula === "string") {
-      normalized.formula.Ungraded = normalized.pricing.formula;
+    if (!Object.keys(formula).length && typeof normalized.pricing.formula === "string") {
+      formula.Ungraded = normalized.pricing.formula;
     }
-    if (typeof normalized.pricing.roundTo99 === "boolean") {
-      normalized.formula.roundTo99 = normalized.pricing.roundTo99;
-    }
+    // roundTo99 will be handled below as legacy -> per-condition/roundingDefault
     delete normalized.pricing;
   }
 
-  if (!Object.keys(normalized.formula).length) {
-    normalized.formula = { ...DEFAULT_CONFIG.formula };
-  } else {
-    if (!normalized.formula.Ungraded) normalized.formula.Ungraded = "*1";
-    if (typeof normalized.formula.roundTo99 !== "boolean") {
-      normalized.formula.roundTo99 = DEFAULT_CONFIG.formula.roundTo99;
+  if (!Object.keys(formula).length) {
+    formula = { ...DEFAULT_CONFIG.formula };
+  }
+
+  let legacyRoundFlag = false;
+
+  // Normalize each condition entry
+  const normalizedFormula = {};
+  for (const [key, value] of Object.entries(formula)) {
+    if (key === "roundTo99") {
+      // legacy global flag -> apply to all conditions that lack rounding
+      if (typeof value === "boolean" && value === true) {
+        legacyRoundFlag = true;
+      }
+      continue;
+    }
+
+    normalizedFormula[key] = normalizeEntry(value);
+  }
+
+  // Apply legacy roundTo99 to any condition lacking rounding
+  if (legacyRoundFlag) {
+    for (const [k, v] of Object.entries(normalizedFormula)) {
+      if (!v.rounding) normalizedFormula[k] = { ...v, rounding: { mode: "up", targets: ["99"] } };
     }
   }
+
+  if (!normalizedFormula.Ungraded) normalizedFormula.Ungraded = normalizeEntry("*1");
+
+  normalized.formula = normalizedFormula;
 
   return normalized;
 }
