@@ -42,9 +42,17 @@ function normalizeFormula(value = "") {
   if (!trimmed) throw new Error("Formula flag requires a value.");
   if (/^(no|off|false)$/i.test(trimmed)) return { apply: false, override: null };
   if (/^(yes|on|true|default)$/i.test(trimmed)) return { apply: true, override: null };
-  let formatted = trimmed;
-  if (/^[0-9.]+$/.test(formatted)) formatted = `*${formatted}`;
-  return { apply: true, override: formatted };
+  if (/[*+\-/]/.test(trimmed)) {
+    throw new Error('Use a percentage like "120" or "120%" (do not use "*1.2" style multipliers).');
+  }
+  const percentish = trimmed.endsWith("%") ? trimmed.slice(0, -1) : trimmed;
+  if (percentish.includes(".") && !trimmed.endsWith("%")) {
+    throw new Error('Use a percentage like "120%" (decimals require a % sign).');
+  }
+  const num = parseFloat(percentish);
+  if (!Number.isFinite(num)) throw new Error('Formula must be a percentage like "120" or "120%".');
+  const multiplier = num / 100;
+  return { apply: true, override: `*${multiplier}` };
 }
 
 function parseBoolean(value, defaultValue = false) {

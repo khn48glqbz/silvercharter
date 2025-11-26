@@ -4,18 +4,15 @@ const PUBLICATIONS_QUERY = `
   {
     publications(first: 20) {
       edges {
-        node {
-          id
-          name
-        }
+        node { id name }
       }
     }
   }
 `;
 
 const PUBLISH_MUTATION = `
-  mutation publishProduct($id: ID!, $publicationIds: [ID!]!) {
-    publishablePublish(id: $id, input: { publicationIds: $publicationIds }) {
+  mutation publishProduct($publishableId: ID!, $inputs: [PublicationInput!]!) {
+    publishablePublish(id: $publishableId, input: $inputs) {
       userErrors { field message }
     }
   }
@@ -51,9 +48,10 @@ export async function publishProduct(productId, channels = []) {
   if (!productId) return;
   const publicationIds = await resolvePublicationIds(channels);
   if (!publicationIds.length) return;
+  const inputs = publicationIds.map((pid) => ({ publicationId: pid }));
   const res = await graphqlPost({
     query: PUBLISH_MUTATION,
-    variables: { id: productId, publicationIds },
+    variables: { publishableId: productId, inputs },
   });
   const errors = res?.data?.publishablePublish?.userErrors;
   if (errors?.length) {

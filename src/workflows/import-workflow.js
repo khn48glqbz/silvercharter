@@ -5,6 +5,7 @@ import { calculateFinalPrice } from "../app/pricing/pricing-engine.js";
 import { findProductBySourceUrlAndCondition } from "../adapters/shopify/services/metafield-service.js";
 import scrapeCard from "../adapters/scrapers/pricecharting.js";
 import { ensureExpansionIconFile } from "../adapters/shopify/services/file-service.js";
+import { formatFormulaForDisplay } from "../shared/util/format-formula.js";
 
 const singlesConditions = new Set(["Ungraded", "Damaged"]);
 
@@ -16,7 +17,7 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
     signed = false,
   } = options;
   let existingProduct = null;
-  const collectionType = signed || singlesConditions.has(condition) ? "Singles" : "Slabs";
+  const collectionType = singlesConditions.has(condition) ? "Singles" : "Slabs";
 
   try {
     existingProduct = await findProductBySourceUrlAndCondition(url, condition, { signed });
@@ -42,6 +43,7 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
         value: existingProduct.value,
         expansionIconId: existingProduct.expansionIcon,
         signed: existingProduct.signed,
+        formula: formatFormulaForDisplay(existingProduct.formula || ""),
       });
     } catch (err) {
       console.warn(`Failed to update inventory for ${existingProduct.title}:`, err.message);
@@ -122,24 +124,34 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
 
   let originalValueDisplay = "N/A";
   let finalPrice = null;
+  let usedFormula = "";
 
   let pricingResult = null;
   if (manualOverride || !applyFormula) {
     finalPrice = Number(Number(basePrice).toFixed(2));
+    usedFormula = "manual";
   } else {
     pricingResult = await calculateFinalPrice(basePrice, config, condition, formulaOverride, applyFormula);
     originalValueDisplay = Number(Number(pricingResult.converted).toFixed(2)).toFixed(2);
     finalPrice = pricingResult.final;
+    usedFormula = pricingResult.usedFormula || formulaOverride || "*1";
   }
   if (signed) {
     originalValueDisplay = "null";
+    usedFormula = "manual";
   } else if (!pricingResult) {
     originalValueDisplay = Number(Number(finalPrice).toFixed(2)).toFixed(2) || "null";
   }
+  const formulaDisplay = formatFormulaForDisplay(usedFormula);
 
-  const displayTitle = signed ? `${scraped.name} (Signature)` : scraped.name;
+  const baseTitle = scraped.name
+    .replace(/\[Signature\]/gi, "")
+    .replace(/\(Signature\)/gi, "")
+    .trim();
+  const displayTitle = signed ? `${baseTitle} [Signature]` : baseTitle;
   console.log(`Uploading ${displayTitle} (${quantity}x, ${condition}) — ${config.currency || "GBP"} ${finalPrice.toFixed(2)}`);
 
+  const attributes = signed ? ["Signature"] : [];
   const result = await saveProduct({
     title: displayTitle,
     price: finalPrice,
@@ -155,6 +167,8 @@ export async function handleImportUrl(url, quantity, condition, config, csvPath,
     value: originalValueDisplay,
     expansionIconId: expansionIconInfo?.id || null,
     signed,
+    attributes,
+    formula: formulaDisplay,
   });
 
   appendCsvRows(

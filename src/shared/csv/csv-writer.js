@@ -5,7 +5,14 @@ import path from "path";
 const LABELS_DIR = path.join(process.cwd(), "data", "labels");
 
 function ensureLabelsDir() {
-  if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR, { recursive: true });
+  if (fs.existsSync(LABELS_DIR)) return;
+  try {
+    fs.mkdirSync(LABELS_DIR, { recursive: true });
+  } catch (err) {
+    console.warn(`Could not create labels directory at ${LABELS_DIR}:`, err.message || err);
+    console.warn("Ensure you have write permissions to the repo directory.");
+    throw err;
+  }
 }
 
 const SESSION_HEADERS = {

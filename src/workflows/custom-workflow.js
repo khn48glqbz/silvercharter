@@ -10,6 +10,7 @@ import { convertToUSD } from "../shared/util/currency.js";
 import { calculateFinalPrice } from "../app/pricing/pricing-engine.js";
 import { getLanguagesMap, getVendorsMap } from "../app/data/static-data.js";
 import { getCustomExpansions } from "../app/data/custom-expansions.js";
+import { formatFormulaForDisplay } from "../shared/util/format-formula.js";
 
 /**
  * Custom card workflow
@@ -51,9 +52,17 @@ const CONDITION_CHOICES = [
 
 const singlesConditions = new Set(["Ungraded", "Damaged"]);
 
+function sanitizeTitleForSignature(title) {
+  return title
+    .replace(/\[Signature\]/gi, "")
+    .replace(/\(Signature\)/gi, "")
+    .trim();
+}
+
 function applySignatureSuffix(title, signed) {
-  if (!signed) return title;
-  return title.includes("(Signature)") ? title : `${title} (Signature)`;
+  if (!signed) return sanitizeTitleForSignature(title);
+  const base = sanitizeTitleForSignature(title);
+  return `${base} [Signature]`.trim();
 }
 
 function slugifyValue(value = "") {
@@ -546,10 +555,11 @@ export default async function handleCustomCard(config, csvPath) {
     const priceLocal = parseFloat(responses.price);
     const currency = (config?.currency || "USD").toUpperCase();
     const condition = responses.condition;
-    const collection = signed || singlesConditions.has(condition) ? "Singles" : "Slabs";
+    const collection = singlesConditions.has(condition) ? "Singles" : "Slabs";
 
     let finalPrice = Number(priceLocal);
     let originalValue = "null";
+    let usedFormula = "manual";
 
     if (signed) {
       finalPrice = Number(Number(priceLocal).toFixed(2));
@@ -557,6 +567,7 @@ export default async function handleCustomCard(config, csvPath) {
     } else if (responses.formulaMode === "skip") {
       finalPrice = Number(Number(priceLocal).toFixed(2));
       originalValue = finalPrice.toFixed(2);
+      usedFormula = "skip";
     } else {
       const baseUSD = await convertToUSD(priceLocal, currency);
       const pricing = await calculateFinalPrice(
@@ -568,13 +579,16 @@ export default async function handleCustomCard(config, csvPath) {
       );
       finalPrice = pricing.final;
       originalValue = Number(Number(pricing.converted).toFixed(2)).toFixed(2);
+      usedFormula = pricing.usedFormula || customFormula || "*1";
     }
+    const formulaDisplay = formatFormulaForDisplay(usedFormula);
 
     const resolvedVendor = vendor || config?.shopify?.vendor || game || "Custom Vendor";
     const sourceUrl = "null";
 
     const displayTitle = applySignatureSuffix(title, signed);
 
+    const attributes = signed ? ["Signature"] : [];
     const result = await saveProduct({
       title: displayTitle,
       price: finalPrice,
@@ -590,6 +604,8 @@ export default async function handleCustomCard(config, csvPath) {
       value: originalValue,
       expansionIconId,
       signed,
+      attributes,
+      formula: formulaDisplay,
     });
 
     appendCsvRows(

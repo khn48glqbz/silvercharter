@@ -4,6 +4,7 @@ import labelsMenu from "../menus/labels-menu.js";
 import { parseSwitchInput } from "../components/utils/switch-parser.js";
 import { handleImportUrl } from "../../workflows/import-workflow.js";
 import handleCustomCard from "../flows/custom-card.js";
+import { formatFormulaForDisplay } from "../../shared/util/format-formula.js";
 
 export default async function runImportSession(config, csvPath) {
   console.log(`Using import session file: ${path.basename(csvPath)}`);
@@ -78,7 +79,7 @@ export default async function runImportSession(config, csvPath) {
         entry.condition,
         `x${entry.quantity}`,
         entry.language ? `lang:${entry.language}` : null,
-        entry.formulaOverride ? `f:${entry.formulaOverride}` : null,
+        entry.formulaOverride ? `Formula: ${formatFormulaForDisplay(entry.formulaOverride)}` : null,
         entry.applyFormula === false ? "formula:off" : null,
         entry.signed ? "signed" : null,
       ]

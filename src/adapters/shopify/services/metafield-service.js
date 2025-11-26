@@ -28,7 +28,16 @@ export async function setProductMetafields(productId, fields = {}) {
     const type = (fields.type || "").trim();
     const expansionIconId = (fields.expansionIconId || "").trim();
     const rawValue = fields.value;
-    const signature = typeof fields.signature === "boolean" ? fields.signature : null;
+    const formula = (fields.formula ?? "").toString().trim();
+    let attributes = Array.isArray(fields.attributes)
+      ? fields.attributes
+      : typeof fields.attributes === "string" && fields.attributes.trim()
+        ? fields.attributes.split(",").map((s) => s.trim()).filter(Boolean)
+        : [];
+
+    if (!attributes.length && fields.signed) {
+      attributes = ["Signature"];
+    }
     const ownerId = normalizeOwnerId(productId);
 
     const metafields = [];
@@ -115,15 +124,24 @@ export async function setProductMetafields(productId, fields = {}) {
       });
     }
 
-    if (signature !== null) {
+    if (formula) {
       metafields.push({
         namespace: "pricecharting",
-        key: "signature",
+        key: "formula",
         type: "single_line_text_field",
-        value: signature ? "true" : "false",
+        value: formula,
         ownerId,
       });
     }
+
+    const attributeValue = attributes.length ? "Signature" : "None";
+    metafields.push({
+      namespace: "pricecharting",
+      key: "attribute",
+      type: "single_line_text_field",
+      value: attributeValue,
+      ownerId,
+    });
 
     const gql = {
       query: `
@@ -170,7 +188,7 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition, o
     const gql = {
       query: `
         query ($q: String!) {
-          products(first: 1, query: $q) {
+          products(first: 20, query: $q) {
             edges {
               node {
                 id
@@ -214,43 +232,62 @@ export async function findProductBySourceUrlAndCondition(sourceUrl, condition, o
     };
 
     const res = await graphqlPost(gql);
-    const edge = res?.data?.products?.edges?.[0] || null;
-    if (!edge) return null;
+    const edges = res?.data?.products?.edges || [];
 
-    const node = edge.node;
-    const variantNode = node.variants?.edges?.[0]?.node;
+    for (const edge of edges) {
+      const node = edge.node;
+      const variantNode = node.variants?.edges?.[0]?.node;
 
-    const metafields = {};
-    for (const edge of node.metafields?.edges || []) {
-      const key = edge.node.key;
-      metafields[key] = {
-        value: edge.node.value,
-        type: edge.node.type,
-        reference: edge.node.reference || null,
+      const metafields = {};
+      for (const mfEdge of node.metafields?.edges || []) {
+        const key = mfEdge.node.key;
+        metafields[key] = {
+          value: mfEdge.node.value,
+          type: mfEdge.node.type,
+          reference: mfEdge.node.reference || null,
+        };
+      }
+
+      const attributesRaw = metafields.attribute?.value || "";
+      let attributesList = [];
+      try {
+        const parsed = JSON.parse(attributesRaw);
+        if (Array.isArray(parsed)) attributesList = parsed.map((s) => String(s).trim()).filter(Boolean);
+      } catch (err) {
+        const split = attributesRaw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+        if (split.length) attributesList = split;
+      }
+      if (!attributesList.length && attributesRaw && attributesRaw.toLowerCase() !== "none") {
+        attributesList = [String(attributesRaw).trim()];
+      }
+
+      const attributeSigned = attributesList.some((attr) => attr.toLowerCase() === "signature");
+      const isSigned = attributeSigned;
+
+      if (desiredSigned !== isSigned) continue;
+
+      return {
+        id: node.id,
+        title: node.title,
+        vendor: node.vendor || "",
+        variantId: variantNode?.id,
+        inventoryItemId: variantNode?.inventoryItem?.id,
+        price: parseFloat(variantNode?.price || 0),
+        barcode: variantNode?.barcode || "",
+        sourceUrl: metafields.source_url?.value || "",
+        condition: metafields.condition?.value || "",
+        game: metafields.game?.value || "",
+        expansion: metafields.expansion?.value || "",
+        language: metafields.language?.value || "",
+        type: metafields.type?.value || "",
+        expansionIcon: metafields.expansion_icon?.reference?.id || "",
+        value: metafields.value?.value ?? null,
+        formula: metafields.formula?.value || "",
+        signed: isSigned,
       };
     }
 
-    const signatureFlag = (metafields.signature?.value || "").toLowerCase() === "true";
-    if (desiredSigned !== signatureFlag) return null;
-
-    return {
-      id: node.id,
-      title: node.title,
-      vendor: node.vendor || "",
-      variantId: variantNode?.id,
-      inventoryItemId: variantNode?.inventoryItem?.id,
-      price: parseFloat(variantNode?.price || 0),
-      barcode: variantNode?.barcode || "",
-      sourceUrl: metafields.source_url?.value || "",
-      condition: metafields.condition?.value || "",
-      game: metafields.game?.value || "",
-      expansion: metafields.expansion?.value || "",
-      language: metafields.language?.value || "",
-      type: metafields.type?.value || "",
-      expansionIcon: metafields.expansion_icon?.reference?.id || "",
-      value: metafields.value?.value ?? null,
-      signed: signatureFlag,
-    };
+    return null;
   } catch (err) {
     console.warn("Failed to query product by source_url & condition:", err.message || err);
     return null;

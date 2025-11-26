@@ -29,6 +29,12 @@ function normalizeCard(card) {
   const vendor = resolveVendor(card.vendor, card.game);
   const handle = String(barcode).trim();
   const productType = "Trading Card";
+  const attributes =
+    Array.isArray(card.attributes) && card.attributes.length
+      ? card.attributes
+      : card.signed
+        ? ["Signature"]
+        : [];
 
   return {
     ...card,
@@ -37,12 +43,18 @@ function normalizeCard(card) {
     vendor,
     handle,
     productType,
+    attributes,
   };
 }
 
+function sanitizeTitle(title = "") {
+  return title.replace(/\[Signature\]/gi, "").replace(/\(Signature\)/gi, "").trim();
+}
+
 function formatTitle(title, signed) {
-  if (!signed) return title;
-  return title.includes("(Signature)") ? title : `${title} (Signature)`;
+  const base = sanitizeTitle(title);
+  if (!signed) return base;
+  return `${base} [Signature]`.trim();
 }
 
 function ensureBarcode(barcode) {
@@ -154,7 +166,8 @@ async function syncMetafields(productId, card) {
     type: card.collection,
     expansionIconId: card.expansionIconId,
     value: card.value,
-    signature: card.signed,
+    attributes: card.attributes,
+    formula: card.formula,
   });
 }
 

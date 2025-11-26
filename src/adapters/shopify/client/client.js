@@ -1,13 +1,34 @@
+import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+import "@shopify/shopify-api/adapters/node";
 import { shopifyApi } from "@shopify/shopify-api";
 
-const ENV_PATH = path.join(process.cwd(), "data", ".env");
+const ENV_PATH = path.join(process.cwd(), "data", "config", ".env");
 dotenv.config({ path: ENV_PATH });
 
 let cachedStoreDomain = null;
 let cachedAccessToken = null;
 let cachedClients = null;
+const LOG_DIR = path.join(process.cwd(), "data", "logs");
+const SDK_LOG = path.join(LOG_DIR, "shopify-sdk.log");
+
+function ensureLogDir() {
+  try {
+    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+  } catch {
+    // ignore logging failures
+  }
+}
+
+function logToFile(message) {
+  try {
+    ensureLogDir();
+    fs.appendFileSync(SDK_LOG, `${new Date().toISOString()} ${message}\n`, "utf8");
+  } catch {
+    // ignore logging failures
+  }
+}
 
 function getStoreDomain() {
   if (cachedStoreDomain) return cachedStoreDomain;
@@ -36,6 +57,15 @@ function buildClients() {
     apiKey: process.env.SHOPIFY_API_KEY || "custom-app",
     apiSecretKey: process.env.SHOPIFY_API_SECRET || "custom-app",
     hostName: shopDomain,
+    logger: {
+      log: (severity, message) => {
+        logToFile(`[${severity}] ${message}`);
+        if (severity === "Error") {
+          console.error(message);
+        }
+      },
+      level: "Error",
+    },
   });
 
   const session = shopify.session.customAppSession(shopDomain);
